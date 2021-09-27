@@ -34,12 +34,9 @@ jobs:
           which python3
           python3 -m pip install pip build twine --upgrade
           python3 -m pip install mkl==2019 mkl-include intel-openmp numpy cmake==3.17 pybind11
-          ls /usr/local/lib/python3.8/site-packages
           ls /usr/local/lib/python3.8/dist-packages
           echo ====================
           pip show mkl-include
           echo ====================
           cat /usr/local/lib/python3.8/dist-packages/mkl_include-2019.0.dist-info/RECORD
-          echo ====================
-          cat /usr/local/lib/python3.8/site-packages/mkl_include-2019.0.dist-info/RECORD
           echo ====================
