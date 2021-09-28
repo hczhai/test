@@ -92,54 +92,51 @@ TEST_F(TestX, TestHarmonicDavidson)
         MatrixFunctions::eigs(a, ww);
         vector<int> eigval_idxs(ww.size());
         cout << "aa3" << endl;
-            cout << eigval_idxs.size() << " " << ww.size() << " " << ww.n << endl;
-            for (int i = 0; i < (int)ww.size(); i++)
-                eigval_idxs[i] = i;
-            if (davidson_type & DavidsonTypes::CloseTo)
-                sort(eigval_idxs.begin(), eigval_idxs.end(),
-                     [&ww, shift](int i, int j)
-                     {
-                         return abs(ww.data[i] - shift) < abs(ww.data[j] - shift);
-                     });
-            else if (davidson_type & DavidsonTypes::LessThan)
-                sort(eigval_idxs.begin(), eigval_idxs.end(),
-                     [&ww, shift](int i, int j)
-                     {
-                         if ((shift >= ww.data[i]) != (shift >= ww.data[j]))
-                             return shift >= ww.data[i];
-                         else if (shift >= ww.data[i])
-                             return shift - ww.data[i] < shift - ww.data[j];
-                         else
-                             return ww.data[i] - shift >= ww.data[j] - shift;
-                     });
-            else if (davidson_type & DavidsonTypes::GreaterThan)
-                sort(eigval_idxs.begin(), eigval_idxs.end(),
-                     [&ww, shift](int i, int j)
-                     {
-                         if ((shift > ww.data[i]) != (shift > ww.data[j]))
-                             return shift > ww.data[j];
-                         else if (shift > ww.data[i])
-                             return shift - ww.data[i] > shift - ww.data[j];
-                         else
-                             return ww.data[i] - shift <= ww.data[j] - shift;
-                     });
-            cout << "aa4" << endl;
-        if (false)
-        {
-            // last root may be inaccurate (rare)
-            for (int i = 0; i < k - 1; i++)
-                ASSERT_LT(abs(ww.data[eigval_idxs[i]] - vw[i]), 1E-6);
-            cout << "aa5" << endl;
-            for (int i = 0; i < k - 1; i++)
-                ASSERT_TRUE(
-                    MatrixFunctions::all_close(
-                        bs[i], MatrixRef(a.data + a.n * eigval_idxs[i], a.n, 1),
-                        1E-3, 1E-3) ||
-                    MatrixFunctions::all_close(
-                        bs[i], MatrixRef(a.data + a.n * eigval_idxs[i], a.n, 1),
-                        1E-3, 1E-3, -1.0));
-            cout << "aa6" << endl;
-        }
+        cout << eigval_idxs.size() << " " << ww.size() << " " << ww.n << endl;
+        for (int i = 0; i < (int)ww.size(); i++)
+            eigval_idxs[i] = i;
+        if (davidson_type & DavidsonTypes::CloseTo)
+            sort(eigval_idxs.begin(), eigval_idxs.end(),
+                 [&ww, shift](int i, int j)
+                 {
+                     return abs(ww.data[i] - shift) < abs(ww.data[j] - shift);
+                 });
+        else if (davidson_type & DavidsonTypes::LessThan)
+            sort(eigval_idxs.begin(), eigval_idxs.end(),
+                 [&ww, shift](int i, int j)
+                 {
+                     if ((shift >= ww.data[i]) != (shift >= ww.data[j]))
+                         return shift >= ww.data[i];
+                     else if (shift >= ww.data[i])
+                         return shift - ww.data[i] < shift - ww.data[j];
+                     else
+                         return ww.data[i] - shift > ww.data[j] - shift;
+                 });
+        else if (davidson_type & DavidsonTypes::GreaterThan)
+            sort(eigval_idxs.begin(), eigval_idxs.end(),
+                 [&ww, shift](int i, int j)
+                 {
+                     if ((shift > ww.data[i]) != (shift > ww.data[j]))
+                         return shift > ww.data[j];
+                     else if (shift > ww.data[i])
+                         return shift - ww.data[i] > shift - ww.data[j];
+                     else
+                         return ww.data[i] - shift < ww.data[j] - shift;
+                 });
+        cout << "aa4" << endl;
+        // last root may be inaccurate (rare)
+        for (int i = 0; i < k - 1; i++)
+            ASSERT_LT(abs(ww.data[eigval_idxs[i]] - vw[i]), 1E-6);
+        cout << "aa5" << endl;
+        for (int i = 0; i < k - 1; i++)
+            ASSERT_TRUE(
+                MatrixFunctions::all_close(
+                    bs[i], MatrixRef(a.data + a.n * eigval_idxs[i], a.n, 1),
+                    1E-3, 1E-3) ||
+                MatrixFunctions::all_close(
+                    bs[i], MatrixRef(a.data + a.n * eigval_idxs[i], a.n, 1),
+                    1E-3, 1E-3, -1.0));
+        cout << "aa6" << endl;
         for (int i = k - 1; i >= 0; i--)
             bs[i].deallocate();
         ww.deallocate();
