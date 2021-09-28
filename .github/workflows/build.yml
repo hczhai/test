@@ -53,7 +53,7 @@ jobs:
           cd build_test
           cmake .. -DUSE_MKL=ON -DBUILD_TEST=ON -DMPI=OFF -DOMP_LIB=GNU -DTBB=ON -DLARGE_BOND=ON
           make
-          ./block2_tests
+          ./xtest_tests
       - name: release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
