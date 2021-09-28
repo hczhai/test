@@ -39,11 +39,12 @@ jobs:
 
       - name: build gtest
         run: |
-          sudo apt-get install libgtest-dev
-          cd /usr/src/gtest
-          sudo cmake CMakeLists.txt
-          sudo make
+          git clone https://github.com/google/googletest
+          cd googletest
+          cmake CMakeLists.txt
+          make
           sudo cp lib/*.a /usr/lib
+          cd ..
 
       - name: test
         env:
