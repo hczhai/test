@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "cassert": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "ostream": "cpp"
     }
 }

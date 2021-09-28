@@ -93,6 +93,11 @@ TEST_F(TestX, TestHarmonicDavidson)
         vector<int> eigval_idxs(ww.size());
         cout << "aa3" << endl;
         cout << eigval_idxs.size() << " " << ww.size() << " " << ww.n << endl;
+        cout << "shift = " << shift << endl;
+        cout << (int)davidson_type << endl;
+        for (int i = 0; i < (int)ww.size(); i++)
+            cout << ww.data[i] << " ";
+        cout << endl;
         for (int i = 0; i < (int)ww.size(); i++)
             eigval_idxs[i] = i;
         if (davidson_type & DavidsonTypes::CloseTo)
