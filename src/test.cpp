@@ -92,8 +92,6 @@ TEST_F(TestX, TestHarmonicDavidson)
         MatrixFunctions::eigs(a, ww);
         vector<int> eigval_idxs(ww.size());
         cout << "aa3" << endl;
-        if (false)
-        {
             cout << eigval_idxs.size() << " " << ww.size() << " " << ww.n << endl;
             for (int i = 0; i < (int)ww.size(); i++)
                 eigval_idxs[i] = i;
@@ -126,6 +124,8 @@ TEST_F(TestX, TestHarmonicDavidson)
                              return ww.data[i] - shift <= ww.data[j] - shift;
                      });
             cout << "aa4" << endl;
+        if (false)
+        {
             // last root may be inaccurate (rare)
             for (int i = 0; i < k - 1; i++)
                 ASSERT_LT(abs(ww.data[eigval_idxs[i]] - vw[i]), 1E-6);
