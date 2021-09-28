@@ -5,15 +5,15 @@ set -e -x
 cd /github/workspace
 
 PYTHON_VERSION=$1
-if [[ "${PYTHON_VERSION}" = "3.6"]]; then
+if [ "${PYTHON_VERSION}" = "3.6" ]; then
     PY_VER=cp36-cp36m
-elif [[ "${PYTHON_VERSION}" = "3.7"]]; then
+elif [ "${PYTHON_VERSION}" = "3.7" ]; then
     PY_VER=cp37-cp37m
-elif [[ "${PYTHON_VERSION}" = "3.8"]]; then
+elif [ "${PYTHON_VERSION}" = "3.8" ]; then
     PY_VER=cp38-cp38
-elif [[ "${PYTHON_VERSION}" = "3.9"]]; then
+elif [ "${PYTHON_VERSION}" = "3.9" ]; then
     PY_VER=cp39-cp39
-elif [[ "${PYTHON_VERSION}" = "3.10"]]; then
+elif [ "${PYTHON_VERSION}" = "3.10" ]; then
     PY_VER=cp310-cp310
 fi
 
