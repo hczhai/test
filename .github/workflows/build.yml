@@ -35,7 +35,7 @@ jobs:
           TAG_STRING: ${{ github.event.ref }}
         run: |
           echo ${TAG_STRING:11}
-          sed -i "s/version=.*/version='${TAG_STRING:11}'/" setup.py
+          sed -i "s/version=.*/version='${TAG_STRING:11}',/" setup.py
       - name: build
         env:
           MKLROOT: ~/.local
