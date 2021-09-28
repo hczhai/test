@@ -47,6 +47,7 @@ protected:
 
 TEST_F(TestX, TestHarmonicDavidson) {
     for (int i = 0; i < n_tests; i++) {
+        cout << "i = " << i << endl;
         MKL_INT n = Random::rand_int(3, 50);
         MKL_INT k = min(n, (MKL_INT)Random::rand_int(1, 5));
         if (k > n / 2)
@@ -74,14 +75,17 @@ TEST_F(TestX, TestHarmonicDavidson) {
             Random::rand_int(0, 2)
                 ? DavidsonTypes::HarmonicLessThan | DavidsonTypes::NoPrecond
                 : DavidsonTypes::HarmonicGreaterThan | DavidsonTypes::NoPrecond;
+        cout << "aa1" << endl;
         vector<double> vw = MatrixFunctions::harmonic_davidson(
             mop, aa, bs, shift, davidson_type, ndav, false,
             (shared_ptr<ParallelCommunicator<void>>)nullptr, 1E-8, n * k * 100,
             -1, 2, 30);
+        cout << "aa2" << endl;
         ASSERT_EQ((int)vw.size(), k);
         DiagonalMatrix w(&vw[0], k);
         MatrixFunctions::eigs(a, ww);
         vector<int> eigval_idxs(ww.size());
+        cout << "aa3" << endl;
         for (int i = 0; i < (int)ww.size(); i++)
             eigval_idxs[i] = i;
         if (davidson_type & DavidsonTypes::CloseTo)
@@ -109,9 +113,11 @@ TEST_F(TestX, TestHarmonicDavidson) {
                      else
                          return ww.data[i] - shift <= ww.data[j] - shift;
                  });
+        cout << "aa4" << endl;
         // last root may be inaccurate (rare)
         for (int i = 0; i < k - 1; i++)
             ASSERT_LT(abs(ww.data[eigval_idxs[i]] - vw[i]), 1E-6);
+        cout << "aa5" << endl;
         for (int i = 0; i < k - 1; i++)
             ASSERT_TRUE(
                 MatrixFunctions::all_close(
@@ -120,6 +126,7 @@ TEST_F(TestX, TestHarmonicDavidson) {
                 MatrixFunctions::all_close(
                     bs[i], MatrixRef(a.data + a.n * eigval_idxs[i], a.n, 1),
                     1E-3, 1E-3, -1.0));
+        cout << "aa6" << endl;
         for (int i = k - 1; i >= 0; i--)
             bs[i].deallocate();
         ww.deallocate();
