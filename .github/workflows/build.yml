@@ -67,7 +67,7 @@ jobs:
       - name: prepare build wheels manylinux
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'ubuntu-latest'
         run:
-          cp ./.github/actions/Dockerfile.manylinux${{ matrix.manylinux }} ./.github/actions/Dockerfile
+          cp ./.github/actions/build-wheel/Dockerfile.manylinux${{ matrix.manylinux }} ./.github/actions/build-wheel/Dockerfile
 
       - name: build manylinux wheels
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'ubuntu-latest'
