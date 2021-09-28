@@ -86,6 +86,7 @@ TEST_F(TestX, TestHarmonicDavidson) {
         MatrixFunctions::eigs(a, ww);
         vector<int> eigval_idxs(ww.size());
         cout << "aa3" << endl;
+        cout << eigval_idxs.size() << " " << ww.size() << " " << ww.n << endl;
         for (int i = 0; i < (int)ww.size(); i++)
             eigval_idxs[i] = i;
         if (davidson_type & DavidsonTypes::CloseTo)
