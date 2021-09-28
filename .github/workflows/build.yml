@@ -41,8 +41,8 @@ jobs:
         run: |
           git clone https://github.com/google/googletest
           cd googletest
-          cmake CMakeLists.txt
-          make
+          sudo cmake CMakeLists.txt
+          sudo make
           sudo cp lib/*.a /usr/lib
           cd ..
 
