@@ -73,7 +73,7 @@ jobs:
           echo ${TAG_STRING:11}
           sed -i "" "s/version=.*/version='${TAG_STRING:11}',/" setup.py
           python -m pip install wheel
-          python wheel . -w ./dist --no-deps
+          python -m pip wheel . -w ./dist --no-deps
 
       - name: prepare build wheels (manylinux)
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'ubuntu-latest'
