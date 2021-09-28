@@ -28,12 +28,14 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-python@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ matrix.python }}
       - name: set tag
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           TAG_STRING: ${{ github.event.ref }}
         run: |
-          echo ${TAG_STRING:10}
+          echo ${TAG_STRING:11}
+          sed -i "s/version=.*/version='${TAG_STRING:11}'/" setup.py
       - name: build
         env:
           MKLROOT: ~/.local
