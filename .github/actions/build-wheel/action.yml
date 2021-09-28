@@ -3,7 +3,7 @@ name: 'build manylinux wheel'
 inputs:
   python-version:
     required: true
-    default: '3.7 3.8 3.9'
+    default: '3.7'
 runs:
   using: 'docker'
   image: 'Dockerfile'

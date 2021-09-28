@@ -17,11 +17,10 @@ jobs:
 
     strategy:
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ macos-latest ]
         python: [ 3.7, 3.9 ]
         manylinux: [ 2010 ]
         plat: [ x86_64 ]
-        macos-target: [ "10.10" ]
       fail-fast: true
 
     steps:
@@ -63,7 +62,13 @@ jobs:
         run: |
           echo ${TAG_STRING:11}
           sed -i "s/version=.*/version='${TAG_STRING:11}',/" setup.py
-      
+
+      - name: build wheels macos
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
+        run:
+          python -m pip install wheel
+          python wheel . -w ./dist --no-deps
+
       - name: prepare build wheels manylinux
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'ubuntu-latest'
         run:
