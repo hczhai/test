@@ -40,6 +40,7 @@ class CMakeBuild(build_ext):
                     cfg.upper(), self.build_temp),
                 '-DPYTHON_EXECUTABLE_HINT={}'.format(sys.executable),
                 '-DBUILD_LIB=ON',
+                '-DUSE_MKL=ON',
             ]
 
             # We can handle some platform-specific settings at our discretion
