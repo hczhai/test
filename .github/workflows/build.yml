@@ -63,11 +63,14 @@ jobs:
         run: |
           echo ${TAG_STRING:11}
           sed -i "s/version=.*/version='${TAG_STRING:11}',/" setup.py
-
-      - name: build wheels manylinux
+      
+      - name: prepare build wheels manylinux
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'ubuntu-latest'
         run:
           cp ./.github/actions/Dockerfile.manylinux${{ matrix.manylinux }} ./.github/actions/Dockerfile
+
+      - name: build manylinux wheels
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'ubuntu-latest'
         uses: ./.github/actions/build-wheel
         with:
           python-version: ${{ matrix.python }}
