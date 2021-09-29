@@ -2,12 +2,84 @@
 #include "main.hpp"
 #include "matrix_functions.hpp"
 #include "gtest/gtest.h"
+#include "mpi.h"
+
+using namespace std;
+
+namespace block2 {
+
+struct MPI {
+    int _ierr, _rank, _size;
+    MPI() {
+        int flag = 1;
+        _ierr = MPI_Initialized(&flag);
+        if (!flag) {
+            _ierr = MPI_Init(nullptr, nullptr);
+            assert(_ierr == 0);
+        }
+        _ierr = MPI_Comm_rank(MPI_COMM_WORLD, &_rank);
+        assert(_ierr == 0);
+        _ierr = MPI_Comm_size(MPI_COMM_WORLD, &_size);
+        assert(_ierr == 0);
+        // Try to guard parallel print statement with barrier and sleep
+        _ierr = MPI_Barrier(MPI_COMM_WORLD);
+        assert(_ierr == 0);
+        cout << "MPI INIT: rank " << _rank << " of " << _size << endl;
+        std::this_thread::sleep_for(chrono::milliseconds(4));
+        _ierr = MPI_Barrier(MPI_COMM_WORLD);
+        assert(_ierr == 0);
+        if (_rank != 0)
+            cout.setstate(ios::failbit);
+    }
+    ~MPI() {
+        cout.clear();
+        cout << "MPI FINALIZE: rank " << _rank << " of " << _size << endl;
+        MPI_Finalize();
+    }
+    static MPI &mpi() {
+        static MPI _mpi;
+        return _mpi;
+    }
+    static int rank() { return mpi()._rank; }
+    static int size() { return mpi()._size; }
+};
+
+}
 
 // using namespace xtest;
 using namespace block2;
 
+// suppress googletest output for non-root mpi procs
+struct MPITest {
+    shared_ptr<testing::TestEventListener> tel;
+    testing::TestEventListener *def_tel;
+    MPITest() {
+        if (block2::MPI::rank() != 0) {
+            testing::TestEventListeners &tels =
+                testing::UnitTest::GetInstance()->listeners();
+            def_tel = tels.Release(tels.default_result_printer());
+            tel = make_shared<testing::EmptyTestEventListener>();
+            tels.Append(tel.get());
+        }
+    }
+    ~MPITest() {
+        if (block2::MPI::rank() != 0) {
+            testing::TestEventListeners &tels =
+                testing::UnitTest::GetInstance()->listeners();
+            assert(tel.get() == tels.Release(tel.get()));
+            tel = nullptr;
+            tels.Append(def_tel);
+        }
+    }
+    static bool okay() {
+        static MPITest _mpi_test;
+        return _mpi_test.tel != nullptr;
+    }
+};
+
 class TestX : public ::testing::Test
 {
+    static bool _mpi;
 protected:
     static const int n_tests_x = 1000000;
     static const int n_tests = 100;
@@ -34,6 +106,8 @@ protected:
         frame_() = nullptr;
     }
 };
+
+bool TestX::_mpi = MPITest::okay();
 
 // TEST_F(TestX, TestXX)
 // {
