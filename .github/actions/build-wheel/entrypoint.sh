@@ -37,4 +37,5 @@ fi
 /opt/python/"${PY_VER}"/bin/pip wheel . -w ./dist --no-deps
 
 find . -type f -iname "*-linux*.whl" -exec sh -c "auditwheel repair '{}' -w \$(dirname '{}') --plat '${PLAT}'" \;
+find . -type f -iname "*-linux*.whl" -exec rm {} \;
 find . -type f -iname "*-manylinux*.whl"
