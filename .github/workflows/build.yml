@@ -22,9 +22,9 @@ jobs:
         manylinux: [ 2010 ]
         plat: [ x86_64 ]
         parallel: [ mpi, serial ]
-      exclude:
-        - os: macos-latest
-          parallel: mpi
+        exclude:
+          - os: macos-latest
+            parallel: mpi
       fail-fast: false
 
     steps:
