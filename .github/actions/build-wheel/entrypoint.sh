@@ -26,7 +26,6 @@ sed -i "/DPYTHON_EXECUTABLE/a \                '-DPYTHON_EXECUTABLE=${PY_EXE}',"
 
 if [ "${PARALLEL}" = "mpi" ]; then
     yum install -y openmpi-devel
-    /opt/python/"${PY_VER}"/bin/pip install --no-cache-dir mpi4py
     sed -i "/DUSE_MKL/a \                '-DMPI=ON'," setup.py
     sed -i "s/name='xtest'/name='xtest-mpi'/g" setup.py
 fi
