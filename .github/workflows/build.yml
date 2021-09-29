@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.python }} ${{ matrix.os }} ${{ matrix.manylinux }} ${{ matrix.plat }}
+    name: ${{ matrix.python }} ${{ matrix.os }} ${{ matrix.plat }} ${{ matrix.parallel }}
     runs-on: ${{ matrix.os }}
 
     strategy:
