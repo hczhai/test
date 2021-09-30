@@ -33,6 +33,7 @@ if [ "${PARALLEL}" = "mpi" ]; then
     make -j 4 |& tee make.out
     make install |& tee install.out
     cd ..
+    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
     /opt/python/"${PY_VER}"/bin/pip install --no-cache-dir mpi4py
     sed -i "/DUSE_MKL/a \                '-DMPI=ON'," setup.py
     sed -i "s/name='xtest'/name='xtest-mpi'/g" setup.py
