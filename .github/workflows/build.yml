@@ -19,13 +19,16 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest ]
         python: [ 3.7, 3.8, 3.9 ]
-        manylinux: [ 2010 ]
+        manylinux: [ 2010, 2014 ]
         plat: [ x86_64 ]
-        parallel: [ serial ]
-        include:
-          - os: ubuntu-latest
+        parallel: [ serial, mpi ]
+        exclude:
+          - os: macos-latest
             parallel: mpi
-            manylinux: [ 2014 ]
+          - parallel: serial
+            manylinux: 2014
+          - parallel: mpi
+            manylinux: 2010
       fail-fast: false
 
     steps:
