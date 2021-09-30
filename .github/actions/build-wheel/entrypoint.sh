@@ -25,10 +25,10 @@ sed -i "/DPYTHON_EXECUTABLE/a \                '-DPYTHON_EXECUTABLE=${PY_EXE}',"
 /opt/python/"${PY_VER}"/bin/pip install --no-cache-dir mkl==2019 mkl-include intel-openmp numpy cmake==3.17 pybind11
 
 if [ "${PARALLEL}" = "mpi" ]; then
-    yum install -y openmpi-devel openmpi
-    cp -r /usr/lib64/openmpi/bin/* /usr/bin
-    cp -r /usr/lib64/openmpi/lib/* /usr/lib
-    cp -r /usr/include/openmpi-x86_64/* /usr/include
+    yum install -y openmpi2-devel openmpi2
+    # cp -r /usr/lib64/openmpi/bin/* /usr/bin
+    # cp -r /usr/lib64/openmpi/lib/* /usr/lib
+    # cp -r /usr/include/openmpi-x86_64/* /usr/include
     /opt/python/"${PY_VER}"/bin/pip install --no-cache-dir mpi4py
     sed -i "/DUSE_MKL/a \                '-DMPI=ON'," setup.py
     sed -i "s/name='xtest'/name='xtest-mpi'/g" setup.py

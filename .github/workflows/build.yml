@@ -21,10 +21,11 @@ jobs:
         python: [ 3.7, 3.8, 3.9 ]
         manylinux: [ 2010 ]
         plat: [ x86_64 ]
-        parallel: [ mpi, serial ]
-        exclude:
-          - os: macos-latest
+        parallel: [ serial ]
+        include:
+          - os: ubuntu-latest
             parallel: mpi
+            manylinux: [ 2014 ]
       fail-fast: false
 
     steps:
