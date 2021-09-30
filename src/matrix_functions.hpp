@@ -28,6 +28,9 @@
 #include <iostream>
 #include <utility>
 #include <vector>
+#ifdef _HAS_MPI
+#include "mpi.h"
+#endif
 
 using namespace std;
 
@@ -149,6 +152,7 @@ inline DavidsonTypes operator|(DavidsonTypes a, DavidsonTypes b) {
     return DavidsonTypes((uint8_t)a | (uint8_t)b);
 }
 
+
 template <typename S> struct ParallelCommunicator {
     int size, rank, root, group, grank, gsize, ngroup;
     double tcomm = 0.0, tidle = 0.0, twait = 0.0; // Runtime for communication
@@ -201,6 +205,56 @@ template <typename S> struct ParallelCommunicator {
     virtual void allreduce_logical_or(bool &v) { assert(size == 1); }
     virtual void waitall() { assert(size == 1); }
 };
+
+#ifdef _HAS_MPI
+struct MPI {
+    int _ierr, _rank, _size;
+    MPI() {
+        int flag = 1;
+        _ierr = MPI_Initialized(&flag);
+        if (!flag) {
+            _ierr = MPI_Init(nullptr, nullptr);
+            assert(_ierr == 0);
+        }
+        _ierr = MPI_Comm_rank(MPI_COMM_WORLD, &_rank);
+        assert(_ierr == 0);
+        _ierr = MPI_Comm_size(MPI_COMM_WORLD, &_size);
+        assert(_ierr == 0);
+        // Try to guard parallel print statement with barrier and sleep
+        _ierr = MPI_Barrier(MPI_COMM_WORLD);
+        assert(_ierr == 0);
+        cout << "MPI INIT: rank " << _rank << " of " << _size << endl;
+        std::this_thread::sleep_for(chrono::milliseconds(4));
+        _ierr = MPI_Barrier(MPI_COMM_WORLD);
+        assert(_ierr == 0);
+        if (_rank != 0)
+            cout.setstate(ios::failbit);
+    }
+    ~MPI() {
+        cout.clear();
+        cout << "MPI FINALIZE: rank " << _rank << " of " << _size << endl;
+        MPI_Finalize();
+    }
+    static MPI &mpi() {
+        static MPI _mpi;
+        return _mpi;
+    }
+    static int rank() { return mpi()._rank; }
+    static int size() { return mpi()._size; }
+};
+
+template <typename S> struct MPICommunicator : ParallelCommunicator<S> {
+    using ParallelCommunicator<S>::size;
+    using ParallelCommunicator<S>::rank;
+    using ParallelCommunicator<S>::root;
+    MPI_Comm comm;
+    MPICommunicator(int root = 0)
+        : ParallelCommunicator<S>(MPI::size(), MPI::rank(), root) {
+        comm = MPI_COMM_WORLD;
+    }
+};
+
+#endif
 
 // Dense matrix operations
 struct MatrixFunctions {
