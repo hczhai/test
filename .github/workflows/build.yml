@@ -125,7 +125,7 @@ jobs:
       - name: upload artifacts
         uses: actions/upload-artifact@v2
         with:
-          name: dist-${{ matrix.parallel }}
+          name: dist-${{ matrix.parallel }}-${{ matrix.python }}-${{ matrix.os }}
           path: dist
 
   publish:
@@ -148,10 +148,24 @@ jobs:
           python -m pip install pip build twine --upgrade
           python -m pip build --sdist
 
-      - name: download wheels (serial)
-        uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v2
         with:
-          name: dist-serial
+          name: dist-serial-3.7-ubuntu-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-serial-3.8-ubuntu-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-serial-3.9-ubuntu-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-serial-3.7-macos-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-serial-3.8-macos-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-serial-3.9-macos-latest
       
       - name: test (serial)
         run: |
@@ -174,10 +188,15 @@ jobs:
           sed -i "" "s/version=.*/version='${TAG_STRING:11}',/" setup.py
           python -m pip build --sdist
 
-      - name: download wheels (mpi)
-        uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v2
         with:
-          name: dist-mpi
+          name: dist-mpi-3.7-ubuntu-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-mpi-3.8-ubuntu-latest
+      - uses: actions/download-artifact@v2
+        with:
+          name: dist-mpi-3.9-ubuntu-latest
 
       - name: test (mpi)
         run: |
