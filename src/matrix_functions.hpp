@@ -28,9 +28,6 @@
 #include <iostream>
 #include <utility>
 #include <vector>
-#ifdef _HAS_MPI
-#include "mpi.h"
-#endif
 
 using namespace std;
 
@@ -128,6 +125,11 @@ extern void dgels(const char *trans, const MKL_INT *m, const MKL_INT *n,
                   const MKL_INT *ldb, double *work, const MKL_INT *lwork,
                   MKL_INT *info);
 
+// matrix copy
+// mat [b] = mat [a]
+extern void dlacpy(const char *uplo, const int *m, const int *n,
+                   const double *a, const int *lda, double *b, const int *ldb);
+
 #endif
 }
 
@@ -152,112 +154,11 @@ inline DavidsonTypes operator|(DavidsonTypes a, DavidsonTypes b) {
     return DavidsonTypes((uint8_t)a | (uint8_t)b);
 }
 
-
-template <typename S> struct ParallelCommunicator {
-    int size, rank, root, group, grank, gsize, ngroup;
-    double tcomm = 0.0, tidle = 0.0, twait = 0.0; // Runtime for communication
-    ParallelCommunicator()
-        : size(1), rank(0), root(0), group(0), grank(0), gsize(1), ngroup(1) {}
-    ParallelCommunicator(int size, int rank, int root)
-        : size(size), rank(rank), root(root), group(0), grank(rank),
-          gsize(size), ngroup(1) {}
-    virtual ~ParallelCommunicator() = default;
-    virtual shared_ptr<ParallelCommunicator<S>> split(int igroup, int irank) {
-        assert(false);
-        return nullptr;
-    }
-    virtual void barrier() { assert(size == 1); }
-    virtual void broadcast(double *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void broadcast(complex<double> *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void ibroadcast(double *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void broadcast(int *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void broadcast(long long int *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void allreduce_sum(double *data, size_t len) { assert(size == 1); }
-    virtual void allreduce_sum(vector<S> &vs) { assert(size == 1); }
-    virtual void allreduce_logical_or(char *data, size_t len) { assert(size == 1); }
-    virtual void allreduce_xor(char *data, size_t len) { assert(size == 1); }
-    virtual void allreduce_min(double *data, size_t len) { assert(size == 1); }
-    virtual void allreduce_min(vector<vector<double>> &vs) {
-        assert(size == 1);
-    }
-    virtual void allreduce_min(vector<double> &vs) { assert(size == 1); }
-    virtual void allreduce_max(double *data, size_t len) { assert(size == 1); }
-    virtual void allreduce_max(vector<double> &vs) { assert(size == 1); }
-    virtual void reduce_sum(double *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void ireduce_sum(double *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void reduce_sum(uint64_t *data, size_t len, int owner) {
-        assert(size == 1);
-    }
-    virtual void allreduce_logical_or(bool &v) { assert(size == 1); }
-    virtual void waitall() { assert(size == 1); }
-};
-
-#ifdef _HAS_MPI
-struct MPI {
-    int _ierr, _rank, _size;
-    MPI() {
-        int flag = 1;
-        _ierr = MPI_Initialized(&flag);
-        if (!flag) {
-            _ierr = MPI_Init(nullptr, nullptr);
-            assert(_ierr == 0);
-        }
-        _ierr = MPI_Comm_rank(MPI_COMM_WORLD, &_rank);
-        assert(_ierr == 0);
-        _ierr = MPI_Comm_size(MPI_COMM_WORLD, &_size);
-        assert(_ierr == 0);
-        // Try to guard parallel print statement with barrier and sleep
-        _ierr = MPI_Barrier(MPI_COMM_WORLD);
-        assert(_ierr == 0);
-        cout << "MPI INIT: rank " << _rank << " of " << _size << endl;
-        std::this_thread::sleep_for(chrono::milliseconds(4));
-        _ierr = MPI_Barrier(MPI_COMM_WORLD);
-        assert(_ierr == 0);
-        if (_rank != 0)
-            cout.setstate(ios::failbit);
-    }
-    ~MPI() {
-        cout.clear();
-        cout << "MPI FINALIZE: rank " << _rank << " of " << _size << endl;
-        MPI_Finalize();
-    }
-    static MPI &mpi() {
-        static MPI _mpi;
-        return _mpi;
-    }
-    static int rank() { return mpi()._rank; }
-    static int size() { return mpi()._size; }
-};
-
-template <typename S> struct MPICommunicator : ParallelCommunicator<S> {
-    using ParallelCommunicator<S>::size;
-    using ParallelCommunicator<S>::rank;
-    using ParallelCommunicator<S>::root;
-    MPI_Comm comm;
-    MPICommunicator(int root = 0)
-        : ParallelCommunicator<S>(MPI::size(), MPI::rank(), root) {
-        comm = MPI_COMM_WORLD;
-    }
-};
-
-#endif
+// General matrix operations
+template <typename FL> struct GMatrixFunctions;
 
 // Dense matrix operations
-struct MatrixFunctions {
+template <> struct GMatrixFunctions<double> {
     // a = b
     static void copy(const MatrixRef &a, const MatrixRef &b,
                      const MKL_INT inca = 1, const MKL_INT incb = 1) {
@@ -270,6 +171,8 @@ struct MatrixFunctions {
         MKL_INT n = a.m * a.n;
         dscal(&n, &scale, a.data, &inc);
     }
+    static void keep_real(const MatrixRef &a) {}
+    static void conjugate(const MatrixRef &a) {}
     // a = a + scale * op(b)
     static void iadd(const MatrixRef &a, const MatrixRef &b, double scale,
                      bool conj = false, double cfactor = 1.0) {
@@ -280,18 +183,38 @@ struct MatrixFunctions {
             if (cfactor == 1.0)
                 daxpy(&n, &scale, b.data, &inc, a.data, &inc);
             else
-                dgemm("N", "N", &inc, &n, &inc, &scale, &x, &inc, b.data, &inc,
+                dgemm("n", "n", &inc, &n, &inc, &scale, &x, &inc, b.data, &inc,
                       &cfactor, a.data, &inc);
         } else {
             assert(a.m == b.n && a.n == b.m);
-            assert(cfactor == 1.0);
-            for (MKL_INT i = 0, inc = 1; i < a.m; i++)
-                daxpy(&a.n, &scale, b.data + i, &a.m, a.data + i * a.n, &inc);
+            const double one = 1.0;
+            for (MKL_INT k = 0, inc = 1; k < b.n; k++)
+                dgemm("t", "n", &b.m, &inc, &inc, &scale, &b(0, k), &b.n, &one,
+                      &inc, &cfactor, &a(k, 0), &a.n);
         }
     }
     static double norm(const MatrixRef &a) {
         MKL_INT n = a.m * a.n, inc = 1;
         return dnrm2(&n, a.data, &inc);
+    }
+    // Computes norm more accurately
+    static double norm_accurate(const MatrixRef &a) {
+        MKL_INT n = a.m * a.n;
+        long double out = 0.0;
+        long double compensate = 0.0;
+        for (MKL_INT ii = 0; ii < n; ++ii) {
+            long double sumi = a.data[ii];
+            sumi *= a.data[ii];
+            // Kahan summation
+            auto y = sumi - compensate;
+            const volatile long double t = out + y;
+            const volatile long double z = t - out;
+            compensate = z - y;
+            out = t;
+        }
+        out = sqrt(out);
+        volatile long double outd = real(out);
+        return static_cast<double>(outd);
     }
     // determinant
     static double det(const MatrixRef &a) {
@@ -325,6 +248,11 @@ struct MatrixFunctions {
         d_alloc->deallocate(work, lwork);
     }
     static double dot(const MatrixRef &a, const MatrixRef &b) {
+        assert(a.m == b.m && a.n == b.n);
+        MKL_INT n = a.m * a.n, inc = 1;
+        return ddot(&n, a.data, &inc, b.data, &inc);
+    }
+    static double complex_dot(const MatrixRef &a, const MatrixRef &b) {
         assert(a.m == b.m && a.n == b.n);
         MKL_INT n = a.m * a.n, inc = 1;
         return ddot(&n, a.data, &inc, b.data, &inc);
@@ -369,21 +297,21 @@ struct MatrixFunctions {
         return nr > 0 ? dnrm2(&nr, xtr.data() + x.m, &nrhs) : 0;
     }
     // c.n is used for ldc; a.n is used for lda
-    static void multiply(const MatrixRef &a, bool conja, const MatrixRef &b,
-                         bool conjb, const MatrixRef &c, double scale,
+    static void multiply(const MatrixRef &a, uint8_t conja, const MatrixRef &b,
+                         uint8_t conjb, const MatrixRef &c, double scale,
                          double cfactor) {
         // if assertion failes here, check whether it is the case
         // where different bra and ket are used with the transpose rule
         // use no-transpose-rule to fix it
-        if (!conja && !conjb) {
+        if (!(conja & 1) && !(conjb & 1)) {
             assert(a.n >= b.m && c.m == a.m && c.n >= b.n);
             dgemm("n", "n", &b.n, &c.m, &b.m, &scale, b.data, &b.n, a.data,
                   &a.n, &cfactor, c.data, &c.n);
-        } else if (!conja && conjb) {
+        } else if (!(conja & 1) && (conjb & 1)) {
             assert(a.n >= b.n && c.m == a.m && c.n >= b.m);
             dgemm("t", "n", &b.m, &c.m, &b.n, &scale, b.data, &b.n, a.data,
                   &a.n, &cfactor, c.data, &c.n);
-        } else if (conja && !conjb) {
+        } else if ((conja & 1) && !(conjb & 1)) {
             assert(a.m == b.m && c.m <= a.n && c.n >= b.n);
             dgemm("n", "t", &b.n, &c.m, &b.m, &scale, b.data, &b.n, a.data,
                   &a.n, &cfactor, c.data, &c.n);
@@ -395,20 +323,22 @@ struct MatrixFunctions {
     }
     // c = bra(.T) * a * ket(.T)
     // return nflop
+    // conj can be 0 (no conj no trans), 1 (trans), 2 (conj), 3 (conj trans)
+    // for real numbers we just need (& 1) to exclude conj
     static size_t rotate(const MatrixRef &a, const MatrixRef &c,
-                         const MatrixRef &bra, bool conj_bra,
-                         const MatrixRef &ket, bool conj_ket, double scale) {
+                         const MatrixRef &bra, uint8_t conj_bra,
+                         const MatrixRef &ket, uint8_t conj_ket, double scale) {
         shared_ptr<VectorAllocator<double>> d_alloc =
             make_shared<VectorAllocator<double>>();
-        MatrixRef work(nullptr, a.m, conj_ket ? ket.m : ket.n);
+        MatrixRef work(nullptr, a.m, (conj_ket & 1) ? ket.m : ket.n);
         work.allocate(d_alloc);
-        multiply(a, false, ket, conj_ket, work, 1.0, 0.0);
-        multiply(bra, conj_bra, work, false, c, scale, 1.0);
+        multiply(a, false, ket, conj_ket & 1, work, 1.0, 0.0);
+        multiply(bra, conj_bra & 1, work, false, c, scale, 1.0);
         work.deallocate(d_alloc);
         return (size_t)ket.m * ket.n * work.m + (size_t)work.m * work.n * c.m;
     }
     // c(.T) = bra.T * a(.T) * ket
-    // return nflop
+    // return nflop. (.T) is always transpose conjugate
     static size_t rotate(const MatrixRef &a, bool conj_a, const MatrixRef &c,
                          bool conj_c, const MatrixRef &bra,
                          const MatrixRef &ket, double scale) {
@@ -426,7 +356,8 @@ struct MatrixFunctions {
     }
     // dleft == true : c = bra (= da x db) * a * ket
     // dleft == false: c = bra * a * ket (= da x db)
-    // return nflop
+    // return nflop.
+    // conj means conj and trans / none for bra, trans / conj for ket
     static size_t three_rotate(const MatrixRef &a, const MatrixRef &c,
                                const MatrixRef &bra, bool conj_bra,
                                const MatrixRef &ket, bool conj_ket,
@@ -565,8 +496,9 @@ struct MatrixFunctions {
         }
     }
     // only diagonal elements so no conj parameters
-    static void tensor_product_diagonal(const MatrixRef &a, const MatrixRef &b,
-                                        const MatrixRef &c, double scale) {
+    static void tensor_product_diagonal(uint8_t abconj, const MatrixRef &a,
+                                        const MatrixRef &b, const MatrixRef &c,
+                                        double scale) {
         assert(a.m == a.n && b.m == b.n && c.m == a.n && c.n == b.n);
         const double cfactor = 1.0;
         const MKL_INT k = 1, lda = a.n + 1, ldb = b.n + 1;
@@ -575,10 +507,11 @@ struct MatrixFunctions {
     }
     // diagonal element of three-matrix tensor product
     static void
-    three_tensor_product_diagonal(const MatrixRef &a, const MatrixRef &b,
-                                  const MatrixRef &c, const MatrixRef &da,
-                                  bool dconja, const MatrixRef &db, bool dconjb,
-                                  bool dleft, double scale, uint32_t stride) {
+    three_tensor_product_diagonal(uint8_t abconj, const MatrixRef &a,
+                                  const MatrixRef &b, const MatrixRef &c,
+                                  const MatrixRef &da, bool dconja,
+                                  const MatrixRef &db, bool dconjb, bool dleft,
+                                  double scale, uint32_t stride) {
         assert(a.m == a.n && b.m == b.n && c.m == a.n && c.n == b.n);
         const double cfactor = 1.0;
         const MKL_INT dstrm = (MKL_INT)stride / (dleft ? a.m : b.m);
@@ -852,10 +785,10 @@ struct MatrixFunctions {
         d_alloc->deallocate(tau, k);
         d_alloc->deallocate(work, lwork);
     }
-    // b = a.T
-    static void transpose(const MatrixRef &a, const MatrixRef &b) {
-        b.clear();
-        iadd(b, a, 1.0, true);
+    // a += b.T
+    static void transpose(const MatrixRef &a, const MatrixRef &b,
+                          double scale = 1.0, double cfactor = 1.0) {
+        iadd(a, b, scale, true, cfactor);
     }
     // diagonalization for each symmetry block
     static void block_eigs(const MatrixRef &a, const DiagonalMatrix &w,
@@ -939,6 +872,7 @@ struct MatrixFunctions {
         t.deallocate();
     }
     // Davidson algorithm
+    // E.R. Davidson, J. Comput. Phys. 17 (1), 87-94 (1975).
     // aa: diag elements of a (for precondition)
     // bs: input/output vector
     // ors: orthogonal states to be projected out
@@ -1085,8 +1019,7 @@ struct MatrixFunctions {
                              else if (shift >= ld.data[i])
                                  return shift - ld.data[i] < shift - ld.data[j];
                              else
-                                 return ld.data[i] - shift >
-                                        ld.data[j] - shift;
+                                 return ld.data[i] - shift > ld.data[j] - shift;
                          });
                 else if (davidson_type & DavidsonTypes::GreaterThan)
                     sort(eigval_idxs.begin(), eigval_idxs.begin() + m,
@@ -1096,8 +1029,7 @@ struct MatrixFunctions {
                              else if (shift > ld.data[i])
                                  return shift - ld.data[i] > shift - ld.data[j];
                              else
-                                 return ld.data[i] - shift <
-                                        ld.data[j] - shift;
+                                 return ld.data[i] - shift < ld.data[j] - shift;
                          });
                 for (int i = 0; i < ck; i++) {
                     int ii = eigval_idxs[i];
@@ -1476,6 +1408,1581 @@ struct MatrixFunctions {
         ndav = num_matmul;
         return eigvals;
     }
+    // Computes exp(t*H), the matrix exponential of a general matrix in
+    // full, using the irreducible rational Pade approximation
+    // Adapted from expokit fortran code dgpadm.f:
+    //   Roger B. Sidje (rbs@maths.uq.edu.au)
+    //   EXPOKIT: Software Package for Computing Matrix Exponentials.
+    //   ACM - Transactions On Mathematical Software, 24(1):130-156, 1998
+    // lwork = 4 * m * m + ideg + 1
+    // exp(tH) is located at work[ret:ret+m*m]
+    static pair<MKL_INT, MKL_INT> expo_pade(MKL_INT ideg, MKL_INT m,
+                                            const double *h, MKL_INT ldh,
+                                            double t, double *work) {
+        static const double zero = 0.0, one = 1.0, mone = -1.0, two = 2.0;
+        static const MKL_INT inc = 1;
+        // check restrictions on input parameters
+        MKL_INT mm = m * m;
+        MKL_INT iflag = 0;
+        assert(ldh >= m);
+        // initialize pointers
+        MKL_INT icoef = 0, ih2 = icoef + (ideg + 1), ip = ih2 + mm,
+                iq = ip + mm, ifree = iq + mm;
+        // scaling: seek ns such that ||t*H/2^ns|| < 1/2;
+        // and set scale = t/2^ns ...
+        memset(work, 0, sizeof(double) * m);
+        for (MKL_INT j = 0; j < m; j++)
+            for (MKL_INT i = 0; i < m; i++)
+                work[i] += abs(h[j * m + i]);
+        double hnorm = 0.0;
+        for (MKL_INT i = 0; i < m; i++)
+            hnorm = max(hnorm, work[i]);
+        hnorm = abs(t * hnorm);
+        if (hnorm == 0.0) {
+            cerr << "Error - null H in expo pade" << endl;
+            abort();
+        }
+        MKL_INT ns = max((MKL_INT)0, (MKL_INT)(log(hnorm) / log(2.0)) + 2);
+        double scale = t / (double)(1LL << ns);
+        double scale2 = scale * scale;
+        // compute Pade coefficients
+        MKL_INT i = ideg + 1, j = 2 * ideg + 1;
+        work[icoef] = 1.0;
+        for (MKL_INT k = 1; k <= ideg; k++)
+            work[icoef + k] =
+                work[icoef + k - 1] * (double)(i - k) / double(k * (j - k));
+        // H2 = scale2*H*H ...
+        dgemm("n", "n", &m, &m, &m, &scale2, h, &ldh, h, &ldh, &zero,
+              work + ih2, &m);
+        // initialize p (numerator) and q (denominator)
+        memset(work + ip, 0, sizeof(double) * mm * 2);
+        double cp = work[icoef + ideg - 1];
+        double cq = work[icoef + ideg];
+        for (MKL_INT j = 0; j < m; j++)
+            work[ip + j * (m + 1)] = cp, work[iq + j * (m + 1)] = cq;
+        // Apply Horner rule
+        MKL_INT iodd = 1;
+        for (MKL_INT k = ideg - 1; k > 0; k--) {
+            MKL_INT iused = iodd * iq + (1 - iodd) * ip;
+            dgemm("n", "n", &m, &m, &m, &one, work + iused, &m, work + ih2, &m,
+                  &zero, work + ifree, &m);
+            for (MKL_INT j = 0; j < m; j++)
+                work[ifree + j * (m + 1)] += work[icoef + k - 1];
+            ip = (1 - iodd) * ifree + iodd * ip;
+            iq = iodd * ifree + (1 - iodd) * iq;
+            ifree = iused;
+            iodd = 1 - iodd;
+        }
+        // Obtain (+/-)(I + 2*(p\q))
+        MKL_INT *iqp = iodd ? &iq : &ip;
+        dgemm("n", "n", &m, &m, &m, &scale, work + *iqp, &m, h, &ldh, &zero,
+              work + ifree, &m);
+        *iqp = ifree;
+        daxpy(&mm, &mone, work + ip, &inc, work + iq, &inc);
+        dgesv(&m, &m, work + iq, &m, (MKL_INT *)work + ih2, work + ip, &m,
+              &iflag);
+        if (iflag != 0) {
+            cerr << "Problem in DGESV in expo pade" << endl;
+            abort();
+        }
+        dscal(&mm, &two, work + ip, &inc);
+        for (MKL_INT j = 0; j < m; j++)
+            work[ip + j * (m + 1)]++;
+        MKL_INT iput = ip;
+        if (ns == 0 && iodd) {
+            dscal(&mm, &mone, work + ip, &inc);
+        } else {
+            // squaring : exp(t*H) = (exp(t*H))^(2^ns)
+            iodd = 1;
+            for (MKL_INT k = 0; k < ns; k++) {
+                MKL_INT iget = iodd * ip + (1 - iodd) * iq;
+                iput = (1 - iodd) * ip + iodd * iq;
+                dgemm("n", "n", &m, &m, &m, &one, work + iget, &m, work + iget,
+                      &m, &zero, work + iput, &m);
+                iodd = 1 - iodd;
+            }
+        }
+        return make_pair(iput, ns);
+    }
+    // Computes w = exp(t*A)*v - for a (sparse) symmetric / general matrix A.
+    // Adapted from expokit fortran code dsexpv.f/dgexpy.f:
+    //   Roger B. Sidje (rbs@maths.uq.edu.au)
+    //   EXPOKIT: Software Package for Computing Matrix Exponentials.
+    //   ACM - Transactions On Mathematical Software, 24(1):130-156, 1998
+    // lwork = n*(m+1)+n+(m+2)^2+4*(m+2)^2+ideg+1
+    template <typename MatMul, typename PComm>
+    static MKL_INT expo_krylov(MatMul &op, MKL_INT n, MKL_INT m, double t,
+                               double *v, double *w, double &tol, double anorm,
+                               double *work, MKL_INT lwork, bool symmetric,
+                               bool iprint, const PComm &pcomm = nullptr) {
+        const MKL_INT inc = 1;
+        const double sqr1 = sqrt(0.1), zero = 0.0;
+        const MKL_INT mxstep = symmetric ? 500 : 1000, mxreject = 0, ideg = 6;
+        const double delta = 1.2, gamma = 0.9;
+        MKL_INT iflag = 0;
+        if (lwork < n * (m + 2) + 5 * (m + 2) * (m + 2) + ideg + 1)
+            iflag = -1;
+        if (m >= n || m <= 0)
+            iflag = -3;
+        if (iflag != 0) {
+            cerr << "bad sizes (in input of expo krylov)" << endl;
+            abort();
+        }
+        // initializations
+        MKL_INT k1 = 2, mh = m + 2, iv = 0, ih = iv + n * (m + 1) + n;
+        MKL_INT ifree = ih + mh * mh, lfree = lwork - ifree, iexph;
+        MKL_INT ibrkflag = 0, mbrkdwn = m, nmult = 0, mx;
+        MKL_INT nreject = 0, nexph = 0, nscale = 0, ns = 0;
+        double t_out = abs(t), tbrkdwn = 0.0, t_now = 0.0, t_new = 0.0;
+        double step_min = t_out, step_max = 0.0, s_error = 0.0, x_error = 0.0;
+        double err_loc;
+        MKL_INT nstep = 0;
+        // machine precision
+        double eps = 0.0;
+        for (double p1 = 4.0 / 3.0, p2, p3; eps == 0.0;)
+            p2 = p1 - 1.0, p3 = p2 + p2 + p2, eps = abs(p3 - 1.0);
+        if (tol <= eps)
+            tol = sqrt(eps);
+        double rndoff = eps * anorm, break_tol = 1E-7;
+        double sgn = t >= 0 ? 1.0 : -1.0;
+        dcopy(&n, v, &inc, w, &inc);
+        double beta = dnrm2(&n, w, &inc), vnorm = beta, hump = beta, avnorm;
+        // obtain the very first stepsize
+        double xm = 1.0 / (double)m, p1;
+        p1 = tol * pow((m + 1) / 2.72, m + 1) * sqrt(2.0 * 3.14 * (m + 1));
+        t_new = (1.0 / anorm) * pow(p1 / (4.0 * beta * anorm), xm);
+        p1 = pow(10.0, round(log10(t_new) - sqr1) - 1);
+        t_new = floor(t_new / p1 + 0.55) * p1;
+        // step-by-step integration
+        for (; t_now < t_out;) {
+            nstep++;
+            double t_step = min(t_out - t_now, t_new);
+            p1 = 1.0 / beta;
+            for (MKL_INT i = 0; i < n; i++)
+                work[iv + i] = p1 * w[i];
+            if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                memset(work + ih, 0, sizeof(double) * mh * mh);
+            // Lanczos loop / Arnoldi loop
+            MKL_INT j1v = iv + n;
+            double hj1j = 0.0;
+            for (MKL_INT j = 0; j < m; j++) {
+                nmult++;
+                op(work + j1v - n, work + j1v);
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    if (symmetric) {
+                        if (j != 0) {
+                            p1 = -work[ih + j * mh + j - 1];
+                            daxpy(&n, &p1, work + j1v - n - n, &inc, work + j1v,
+                                  &inc);
+                        }
+                        double hjj =
+                            -ddot(&n, work + j1v - n, &inc, work + j1v, &inc);
+                        work[ih + j * (mh + 1)] = -hjj;
+                        daxpy(&n, &hjj, work + j1v - n, &inc, work + j1v, &inc);
+                        hj1j = dnrm2(&n, work + j1v, &inc);
+                    } else {
+                        for (MKL_INT i = 0; i <= j; i++) {
+                            double hij = -ddot(&n, work + iv + i * n, &inc,
+                                               work + j1v, &inc);
+                            daxpy(&n, &hij, work + iv + i * n, &inc, work + j1v,
+                                  &inc);
+                            work[ih + j * mh + i] = -hij;
+                        }
+                        hj1j = dnrm2(&n, work + j1v, &inc);
+                    }
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(&hj1j, 1, pcomm->root);
+                // if "happy breakdown" go straightforward at the end
+                if (hj1j <= break_tol) {
+                    if (iprint)
+                        cout << "happy breakdown: mbrkdwn =" << j + 1
+                             << " h = " << hj1j << endl;
+                    k1 = 0, ibrkflag = 1;
+                    mbrkdwn = j + 1, tbrkdwn = t_now;
+                    t_step = t_out - t_now;
+                    break;
+                }
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    work[ih + j * mh + j + 1] = hj1j;
+                    if (symmetric)
+                        work[ih + (j + 1) * mh + j] = hj1j;
+                    hj1j = 1.0 / hj1j;
+                    dscal(&n, &hj1j, work + j1v, &inc);
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(work + j1v, n, pcomm->root);
+                j1v += n;
+            }
+            if (k1 != 0) {
+                nmult++;
+                op(work + j1v - n, work + j1v);
+                if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                    avnorm = dnrm2(&n, work + j1v, &inc);
+            }
+            MKL_INT ireject = 0;
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                // set 1 for the 2-corrected scheme
+                if (symmetric)
+                    work[ih + m * mh + m - 1] = 0.0;
+                work[ih + m * mh + m + 1] = 1.0;
+                // loop while ireject<mxreject until the tolerance is reached
+                for (ireject = 0;;) {
+                    // compute w = beta*V*exp(t_step*H)*e1
+                    nexph++;
+                    mx = mbrkdwn + k1;
+                    // irreducible rational Pade approximation
+                    auto xp = expo_pade(ideg, mx, work + ih, mh, sgn * t_step,
+                                        work + ifree);
+                    iexph = xp.first + ifree, ns = xp.second;
+                    nscale += ns;
+                    // error estimate
+                    if (k1 == 0)
+                        err_loc = tol;
+                    else {
+                        double p1 = abs(work[iexph + m]) * beta;
+                        double p2 = abs(work[iexph + m + 1]) * beta * avnorm;
+                        if (p1 > 10.0 * p2)
+                            err_loc = p2, xm = 1.0 / (double)m;
+                        else if (p1 > p2)
+                            err_loc = p1 * p2 / (p1 - p2), xm = 1.0 / (double)m;
+                        else
+                            err_loc = p1, xm = 1.0 / (double)(m - 1);
+                    }
+                    // reject the step-size if the error is not acceptable
+                    if (k1 != 0 && err_loc > delta * t_step * tol &&
+                        (mxreject == 0 || ireject < mxreject)) {
+                        double t_old = t_step;
+                        t_step =
+                            gamma * t_step * pow(t_step * tol / err_loc, xm);
+                        p1 = pow(10.0, round(log10(t_step) - sqr1) - 1);
+                        t_step = floor(t_step / p1 + 0.55) * p1;
+                        if (iprint)
+                            cout << "t_step = " << t_old
+                                 << " err_loc = " << err_loc
+                                 << " err_required = " << delta * t_old * tol
+                                 << endl
+                                 << "  stepsize rejected, stepping down to:"
+                                 << t_step << endl;
+                        ireject++;
+                        nreject++;
+                        break;
+                    } else
+                        break;
+                }
+            }
+            if (mxreject != 0 && pcomm != nullptr)
+                pcomm->broadcast(&ireject, 1, pcomm->root);
+            if (mxreject != 0 && ireject > mxreject) {
+                cerr << "failure in expo krylov: ---"
+                     << " The requested tolerance is too high. Rerun "
+                        "with a smaller value.";
+                abort();
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                // now update w = beta*V*exp(t_step*H)*e1 and the hump
+                mx = mbrkdwn + max((MKL_INT)0, k1 - 1);
+                dgemv("n", &n, &mx, &beta, work + iv, &n, work + iexph, &inc,
+                      &zero, w, &inc);
+                beta = dnrm2(&n, w, &inc);
+                hump = max(hump, beta);
+                // suggested value for the next stepsize
+                t_new = gamma * t_step * pow(t_step * tol / err_loc, xm);
+                p1 = pow(10.0, round(log10(t_new) - sqr1) - 1);
+                t_new = floor(t_new / p1 + 0.55) * p1;
+                err_loc = max(err_loc, rndoff);
+                // update the time covered
+                t_now += t_step;
+                // display and keep some information
+                if (iprint)
+                    cout << "integration " << nstep << " scale-square =" << ns
+                         << " step_size = " << t_step
+                         << " err_loc = " << err_loc << " next_step = " << t_new
+                         << endl;
+                step_min = min(step_min, t_step);
+                step_max = max(step_max, t_step);
+                s_error += err_loc;
+                x_error = max(x_error, err_loc);
+            }
+            if (pcomm != nullptr) {
+                double tmp[3] = {beta, t_new, t_now};
+                pcomm->broadcast(tmp, 3, pcomm->root);
+                pcomm->broadcast(w, n, pcomm->root);
+                beta = tmp[0], t_new = tmp[1], t_now = tmp[2];
+            }
+            if (mxstep != 0 && nstep >= mxstep) {
+                iflag = 1;
+                break;
+            }
+        }
+        return nmult;
+    }
+    // apply exponential of a matrix to a vector
+    // v: input/output vector
+    template <typename MatMul, typename PComm>
+    static int expo_apply(MatMul &op, double t, double anorm, MatrixRef &v,
+                          double consta, bool symmetric, bool iprint = false,
+                          const PComm &pcomm = nullptr, double conv_thrd = 5E-6,
+                          int deflation_max_size = 20) {
+        MKL_INT vm = v.m, vn = v.n, n = vm * vn;
+        if (n < 4) {
+            const MKL_INT lwork = 4 * n * n + 7;
+            vector<double> te(n), h(n * n), work(lwork);
+            MatrixRef e = MatrixRef(te.data(), vm, vn);
+            memset(e.data, 0, sizeof(double) * n);
+            for (MKL_INT i = 0; i < n; i++) {
+                e.data[i] = 1.0;
+                op(e, MatrixRef(h.data() + i * n, vm, vn));
+                h[i * (n + 1)] += consta;
+                e.data[i] = 0.0;
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                MKL_INT iptr =
+                    expo_pade(6, n, h.data(), n, t, work.data()).first;
+                multiply(MatrixRef(work.data() + iptr, n, n), true, v, false, e,
+                         1.0, 0.0);
+                memcpy(v.data, e.data, sizeof(double) * n);
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(v.data, n, pcomm->root);
+            return n;
+        }
+        auto lop = [&op, consta, n, vm, vn](double *a, double *b) -> void {
+            static MKL_INT inc = 1;
+            memset(b, 0, sizeof(double) * n);
+            op(MatrixRef(a, vm, vn), MatrixRef(b, vm, vn));
+            daxpy(&n, &consta, a, &inc, b, &inc);
+        };
+        MKL_INT m = min((MKL_INT)deflation_max_size, n - 1);
+        MKL_INT lwork = n * (m + 2) + 5 * (m + 2) * (m + 2) + 7;
+        vector<double> w(n), work(lwork);
+        anorm += abs(consta) * n;
+        if (anorm < 1E-10)
+            anorm = 1.0;
+        MKL_INT nmult =
+            expo_krylov(lop, n, m, t, v.data, w.data(), conv_thrd, anorm,
+                        work.data(), lwork, symmetric, iprint, (PComm)pcomm);
+        memcpy(v.data, w.data(), sizeof(double) * n);
+        return (int)nmult;
+    }
+    // Solve x in linear equation H x = b
+    // by applying deflated CG method
+    // where H is symmetric and positive-definite
+    // H x := op(x) + consta * x
+    template <typename MatMul, typename PComm>
+    static double harmonic_projected_deflated_conjugate_gradient(
+        MatMul &op, const DiagonalMatrix &aa, MatrixRef x, MatrixRef b,
+        int &nmult, int &ndav, double consta = 0.0, bool iprint = false,
+        const PComm &pcomm = nullptr, double conv_thrd = 5E-6,
+        double conv_thrd_p = 5E-6, int max_iter = 5000, int soft_max_iter = -1,
+        int deflation_min_size = 2, int deflation_max_size = 50) {
+        int k = 5;
+        shared_ptr<VectorAllocator<double>> d_alloc =
+            make_shared<VectorAllocator<double>>();
+        if (deflation_max_size > (int)x.size())
+            deflation_max_size = (int)x.size();
+        if (deflation_min_size > deflation_max_size)
+            deflation_min_size = deflation_max_size;
+        if (deflation_min_size < k)
+            deflation_min_size = k;
+        MatrixRef pbs(nullptr, (MKL_INT)(deflation_max_size * x.size()), 1);
+        MatrixRef pss(nullptr, (MKL_INT)(deflation_max_size * x.size()), 1);
+        pbs.data = d_alloc->allocate(deflation_max_size * x.size());
+        pss.data = d_alloc->allocate(deflation_max_size * x.size());
+        vector<MatrixRef> ws(deflation_max_size, MatrixRef(nullptr, x.m, x.n));
+        vector<MatrixRef> aws(deflation_max_size, MatrixRef(nullptr, x.m, x.n));
+        for (int i = 0; i < deflation_max_size; i++) {
+            ws[i].data = pbs.data + ws[i].size() * i;
+            aws[i].data = pss.data + aws[i].size() * i;
+        }
+        copy(ws[0], x);
+        int num_matmul = 0;
+        aws[0].clear();
+        op(ws[0], aws[0]);
+        if (consta != 0)
+            iadd(aws[0], ws[0], consta);
+        iscale(ws[0], 1.0 / sqrt(dot(aws[0], aws[0])));
+        iscale(aws[0], 1.0 / sqrt(dot(aws[0], aws[0])));
+        num_matmul++;
+        vector<int> eigval_idxs(deflation_max_size);
+        MatrixRef q(nullptr, x.m, x.n);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank)
+            q.allocate();
+        int ck = 0, msig = 0, m = 1, xiter = 0;
+        double qq;
+        if (iprint)
+            cout << endl;
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                DiagonalMatrix ld(nullptr, m);
+                MatrixRef alpha(nullptr, m, m);
+                ld.allocate();
+                alpha.allocate();
+                vector<MatrixRef> tmp(m, MatrixRef(nullptr, x.m, x.n));
+                for (int i = 0; i < m; i++)
+                    tmp[i].allocate();
+                int ntg = threading->activate_global();
+#pragma omp parallel num_threads(ntg)
+                {
+#ifdef _MSC_VER
+#pragma omp for schedule(dynamic)
+                    for (int ij = 0; ij < m * m; ij++) {
+                        int i = ij / m, j = ij % m;
+#else
+#pragma omp for schedule(dynamic) collapse(2)
+                    for (int i = 0; i < m; i++)
+                        for (int j = 0; j < m; j++) {
+#endif
+                        if (j <= i)
+                            alpha(i, j) = dot(ws[i], aws[j]);
+                    }
+#pragma omp single
+                    eigs(alpha, ld);
+                    // note alpha row/column is diff from python
+                    // b[1:m] = np.dot(b[:], alpha[:, 1:m])
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++) {
+                        copy(tmp[j], ws[j]);
+                        iscale(ws[j], alpha(j, j));
+                    }
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++)
+                        for (int i = 0; i < m; i++)
+                            if (i != j)
+                                iadd(ws[j], tmp[i], alpha(j, i));
+                                // sigma[1:m] = np.dot(sigma[:], alpha[:, 1:m])
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++) {
+                        copy(tmp[j], aws[j]);
+                        iscale(aws[j], alpha(j, j));
+                    }
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++)
+                        for (int i = 0; i < m; i++)
+                            if (i != j)
+                                iadd(aws[j], tmp[i], alpha(j, i));
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++)
+                        ld(j, j) = dot(ws[j], aws[j]) / dot(ws[j], ws[j]);
+                }
+                threading->activate_normal();
+                for (int i = m - 1; i >= 0; i--)
+                    tmp[i].deallocate();
+                alpha.deallocate();
+                for (int i = 0; i < m; i++)
+                    eigval_idxs[i] = m - 1 - i;
+                for (int i = 0; i < ck; i++) {
+                    int ii = eigval_idxs[i];
+                    copy(q, aws[ii]);
+                    iadd(q, ws[ii], -ld(ii, ii));
+                    if (dot(q, q) >= conv_thrd_p) {
+                        ck = i;
+                        break;
+                    }
+                }
+                int ick = eigval_idxs[ck];
+                copy(q, aws[ick]);
+                iadd(q, ws[ick], -ld(ick, ick));
+                qq = dot(q, q);
+                if (iprint)
+                    cout << setw(6) << xiter << setw(6) << m << setw(6) << ck
+                         << fixed << setw(15) << setprecision(8) << ld.data[ick]
+                         << scientific << setw(13) << setprecision(2) << qq
+                         << endl;
+                olsen_precondition(q, ws[ick], ld.data[ick], aa);
+                ld.deallocate();
+            }
+            if (pcomm != nullptr) {
+                pcomm->broadcast(&qq, 1, pcomm->root);
+                pcomm->broadcast(&ck, 1, pcomm->root);
+            }
+            if (m == deflation_max_size && ck >= k - 1 && qq < conv_thrd_p) {
+                ck = k;
+                break;
+            }
+            if (m == deflation_max_size &&
+                xiter + (deflation_max_size - deflation_min_size) >=
+                    soft_max_iter)
+                break;
+            if (qq < conv_thrd_p && ck < k - 1)
+                ck++;
+            else {
+                bool do_deflation = false;
+                if (m >= deflation_max_size) {
+                    m = msig = deflation_min_size;
+                    do_deflation = true;
+                }
+                copy(ws[m], q);
+                if (pcomm != nullptr)
+                    pcomm->broadcast(ws[m].data, ws[m].size(), pcomm->root);
+                aws[m].clear();
+                op(ws[m], aws[m]);
+                if (consta != 0)
+                    iadd(aws[m], ws[m], consta);
+                num_matmul++;
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    if (do_deflation) {
+                        vector<MatrixRef> tmp(m, MatrixRef(nullptr, x.m, x.n));
+                        for (int i = 0; i < m; i++)
+                            tmp[i].allocate();
+                        int ntg = threading->activate_global();
+#pragma omp parallel num_threads(ntg)
+                        {
+#pragma omp for schedule(static)
+                            for (int j = 0; j < m; j++)
+                                copy(tmp[j], ws[eigval_idxs[j]]);
+#pragma omp for schedule(static)
+                            for (int j = 0; j < m; j++)
+                                copy(ws[j], tmp[j]);
+#pragma omp for schedule(static)
+                            for (int j = 0; j < m; j++)
+                                copy(tmp[j], aws[eigval_idxs[j]]);
+#pragma omp for schedule(static)
+                            for (int j = 0; j < m; j++)
+                                copy(aws[j], tmp[j]);
+                        }
+                        threading->activate_normal();
+                        for (int i = m - 1; i >= 0; i--)
+                            tmp[i].deallocate();
+                    }
+                    for (int i = 0; i < m + 1; i++) {
+                        for (int j = 0; j < i; j++) {
+                            iadd(ws[i], ws[j], -dot(aws[j], aws[i]));
+                            iadd(aws[i], aws[j], -dot(aws[j], aws[i]));
+                        }
+                        iscale(ws[i], 1.0 / sqrt(dot(aws[i], aws[i])));
+                        iscale(aws[i], 1.0 / sqrt(dot(aws[i], aws[i])));
+                    }
+                }
+                m++;
+            }
+        }
+        if (pcomm == nullptr || pcomm->root == pcomm->rank)
+            q.deallocate();
+        assert(m == deflation_max_size);
+        ndav = num_matmul;
+        MatrixRef p(nullptr, x.m, x.n), r(nullptr, x.m, x.n);
+        MatrixRef hp(nullptr, x.m, x.n);
+        double ff[2];
+        double &error = ff[0], &func = ff[1];
+        double beta = 0.0, old_beta = 0.0;
+        r.allocate();
+        p.allocate();
+        hp.allocate();
+        int nw = (int)ws.size();
+        for (int i = 0; i < nw; i++) {
+            for (int j = 0; j < i; j++) {
+                double ww = dot(ws[j], ws[i]);
+                iadd(ws[i], ws[j], -ww);
+                iadd(aws[i], aws[j], -ww);
+            }
+            double w_normsq = sqrt(dot(ws[i], ws[i]));
+            assert(w_normsq > 1E-14);
+            iscale(ws[i], 1.0 / w_normsq);
+            iscale(aws[i], 1.0 / w_normsq);
+        }
+        MatrixRef winv(nullptr, nw, nw);
+        MatrixRef mu(nullptr, nw, 1);
+        winv.allocate();
+        mu.allocate();
+        r.clear();
+        p.clear();
+        hp.clear();
+        op(x, r);
+        if (consta != 0)
+            iadd(r, x, consta);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            iscale(r, -1);
+            iadd(r, b, 1); // r = b - Ax
+            if (nw != 0) {
+                for (int i = 0; i < nw; i++)
+                    for (int j = 0; j <= i; j++) {
+                        winv(i, j) = dot(aws[i], ws[j]);
+                        winv(j, i) = winv(i, j);
+                    }
+                inverse(winv);
+                mu.clear();
+                for (int i = 0; i < nw; i++) {
+                    for (int j = 0; j < nw; j++)
+                        mu.data[i] += dot(r, ws[j]) * winv(i, j);
+                    iadd(x, ws[i], mu.data[i]);
+                    iadd(r, aws[i], -mu.data[i]);
+                }
+            }
+            cg_precondition(p, r, aa);
+            if (nw != 0) {
+                op(p, hp);
+                if (consta != 0)
+                    iadd(hp, p, consta);
+                mu.clear();
+                for (int i = 0; i < nw; i++) {
+                    for (int j = 0; j < nw; j++)
+                        mu.data[i] += dot(hp, ws[j]) * winv(i, j);
+                    iadd(p, ws[i], -mu.data[i]);
+                    iadd(hp, aws[i], -mu.data[i]);
+                }
+            }
+            beta = dot(p, r);
+            error = dot(r, r);
+        }
+        if (iprint)
+            cout << endl;
+        if (pcomm != nullptr)
+            pcomm->broadcast(&error, 1, pcomm->root);
+        if (error < conv_thrd) {
+            if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                func = dot(x, b);
+            if (pcomm != nullptr)
+                pcomm->broadcast(&func, 1, pcomm->root);
+            if (iprint)
+                cout << setw(6) << 0 << fixed << setw(15) << setprecision(8)
+                     << func << scientific << setw(13) << setprecision(2)
+                     << error << endl;
+            mu.deallocate();
+            winv.deallocate();
+            hp.deallocate();
+            p.deallocate();
+            r.deallocate();
+            nmult = 1;
+            d_alloc->deallocate(pss.data, deflation_max_size * x.size());
+            d_alloc->deallocate(pbs.data, deflation_max_size * x.size());
+            return func;
+        }
+        old_beta = beta;
+        if (pcomm != nullptr)
+            pcomm->broadcast(p.data, p.size(), pcomm->root);
+        MatrixRef z(nullptr, x.m, x.n), az(nullptr, x.m, x.n);
+        z.allocate();
+        az.allocate();
+        xiter = 0;
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            if (nw == 0) {
+                hp.clear();
+                op(p, hp);
+                if (consta != 0)
+                    iadd(hp, p, consta);
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                double alpha = old_beta / dot(p, hp);
+                iadd(x, p, alpha);
+                iadd(r, hp, -alpha);
+                cg_precondition(z, r, aa);
+                error = dot(r, r);
+                beta = dot(z, r);
+                func = dot(x, b);
+                if (iprint)
+                    cout << setw(6) << xiter << fixed << setw(15)
+                         << setprecision(8) << func << scientific << setw(13)
+                         << setprecision(2) << error << endl;
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(&error, 2, pcomm->root);
+            if (error < conv_thrd)
+                break;
+            else {
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    double gamma = beta / old_beta;
+                    old_beta = beta;
+                    iscale(p, gamma);
+                    iadd(p, z, 1.0);
+                    if (nw != 0) {
+                        az.clear();
+                        op(z, az);
+                        if (consta != 0)
+                            iadd(az, z, consta);
+                        iscale(hp, gamma);
+                        iadd(hp, az, 1.0);
+                        mu.clear();
+                        for (int i = 0; i < nw; i++) {
+                            for (int j = 0; j < nw; j++)
+                                mu.data[i] += dot(az, ws[j]) * winv(i, j);
+                            iadd(p, ws[i], -mu.data[i]);
+                            iadd(hp, aws[i], -mu.data[i]);
+                        }
+                    }
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(p.data, p.size(), pcomm->root);
+            }
+        }
+        if (xiter == max_iter && error >= conv_thrd) {
+            cout << "Error : linear solver (cg) not converged!" << endl;
+            assert(false);
+        }
+        nmult = xiter + 1;
+        az.deallocate();
+        z.deallocate();
+        mu.deallocate();
+        winv.deallocate();
+        hp.deallocate();
+        p.deallocate();
+        r.deallocate();
+        if (pcomm != nullptr)
+            pcomm->broadcast(x.data, x.size(), pcomm->root);
+        d_alloc->deallocate(pss.data, deflation_max_size * x.size());
+        d_alloc->deallocate(pbs.data, deflation_max_size * x.size());
+        return func;
+    }
+    // Solve x in linear equation H x = b
+    // by applying deflated CG method
+    // where H is symmetric and positive-definite
+    // H x := op(x) + consta * x
+    template <typename MatMul, typename PComm>
+    static double davidson_projected_deflated_conjugate_gradient(
+        MatMul &op, const DiagonalMatrix &aa, MatrixRef x, MatrixRef b, int k,
+        int &nmult, int &ndav, double consta = 0.0, bool iprint = false,
+        const PComm &pcomm = nullptr, double conv_thrd = 5E-6,
+        double conv_thrd_p = 5E-6, int max_iter = 5000, int soft_max_iter = -1,
+        int deflation_min_size = 2, int deflation_max_size = 50) {
+        shared_ptr<VectorAllocator<double>> d_alloc =
+            make_shared<VectorAllocator<double>>();
+        if (deflation_max_size > (int)x.size())
+            deflation_max_size = (int)x.size();
+        if (deflation_min_size > deflation_max_size)
+            deflation_min_size = deflation_max_size;
+        if (deflation_min_size < k)
+            deflation_min_size = k;
+        MatrixRef pbs(nullptr, (MKL_INT)(deflation_max_size * x.size()), 1);
+        MatrixRef pss(nullptr, (MKL_INT)(deflation_max_size * x.size()), 1);
+        pbs.data = d_alloc->allocate(deflation_max_size * x.size());
+        pss.data = d_alloc->allocate(deflation_max_size * x.size());
+        vector<MatrixRef> ws(deflation_max_size, MatrixRef(nullptr, x.m, x.n));
+        vector<MatrixRef> aws(deflation_max_size, MatrixRef(nullptr, x.m, x.n));
+        for (int i = 0; i < deflation_max_size; i++) {
+            ws[i].data = pbs.data + ws[i].size() * i;
+            aws[i].data = pss.data + aws[i].size() * i;
+        }
+        copy(ws[0], x);
+        iscale(ws[0], 1.0 / sqrt(dot(ws[0], ws[0])));
+        MatrixRef q(nullptr, x.m, x.n);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank)
+            q.allocate();
+        int ck = 0, msig = 0, m = 1, xiter = 0;
+        double qq;
+        if (iprint)
+            cout << endl;
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            if (pcomm != nullptr && xiter != 1)
+                pcomm->broadcast(pbs.data + x.size() * msig,
+                                 x.size() * (m - msig), pcomm->root);
+            for (int i = msig; i < m; i++, msig++) {
+                aws[i].clear();
+                op(ws[i], aws[i]);
+                if (consta != 0)
+                    iadd(aws[i], ws[i], consta);
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                DiagonalMatrix ld(nullptr, m);
+                MatrixRef alpha(nullptr, m, m);
+                ld.allocate();
+                alpha.allocate();
+                vector<MatrixRef> tmp(m, MatrixRef(nullptr, x.m, x.n));
+                for (int i = 0; i < m; i++)
+                    tmp[i].allocate();
+                int ntg = threading->activate_global();
+#pragma omp parallel num_threads(ntg)
+                {
+#ifdef _MSC_VER
+#pragma omp for schedule(dynamic)
+                    for (int ij = 0; ij < m * m; ij++) {
+                        int i = ij / m, j = ij % m;
+#else
+#pragma omp for schedule(dynamic) collapse(2)
+                    for (int i = 0; i < m; i++)
+                        for (int j = 0; j < m; j++) {
+#endif
+                        if (j <= i)
+                            alpha(i, j) = dot(ws[i], aws[j]);
+                    }
+#pragma omp single
+                    eigs(alpha, ld);
+                    // note alpha row/column is diff from python
+                    // b[1:m] = np.dot(b[:], alpha[:, 1:m])
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++) {
+                        copy(tmp[j], ws[j]);
+                        iscale(ws[j], alpha(j, j));
+                    }
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++)
+                        for (int i = 0; i < m; i++)
+                            if (i != j)
+                                iadd(ws[j], tmp[i], alpha(j, i));
+                                // sigma[1:m] = np.dot(sigma[:], alpha[:, 1:m])
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++) {
+                        copy(tmp[j], aws[j]);
+                        iscale(aws[j], alpha(j, j));
+                    }
+#pragma omp for schedule(static)
+                    for (int j = 0; j < m; j++)
+                        for (int i = 0; i < m; i++)
+                            if (i != j)
+                                iadd(aws[j], tmp[i], alpha(j, i));
+                }
+                threading->activate_normal();
+                for (int i = m - 1; i >= 0; i--)
+                    tmp[i].deallocate();
+                alpha.deallocate();
+                for (int i = 0; i < ck; i++) {
+                    copy(q, aws[i]);
+                    iadd(q, ws[i], -ld(i, i));
+                    if (dot(q, q) >= conv_thrd_p) {
+                        ck = i;
+                        break;
+                    }
+                }
+                copy(q, aws[ck]);
+                iadd(q, ws[ck], -ld(ck, ck));
+                qq = dot(q, q);
+                if (iprint)
+                    cout << setw(6) << xiter << setw(6) << m << setw(6) << ck
+                         << fixed << setw(15) << setprecision(8) << ld.data[ck]
+                         << scientific << setw(13) << setprecision(2) << qq
+                         << endl;
+                olsen_precondition(q, ws[ck], ld.data[ck], aa);
+                ld.deallocate();
+            }
+            if (pcomm != nullptr) {
+                pcomm->broadcast(&qq, 1, pcomm->root);
+                pcomm->broadcast(&ck, 1, pcomm->root);
+            }
+            if (m == deflation_max_size && ck >= k - 1 && qq < conv_thrd_p) {
+                ck = k;
+                break;
+            }
+            if (m == deflation_max_size &&
+                xiter + (deflation_max_size - deflation_min_size) >=
+                    soft_max_iter)
+                break;
+            if (qq < conv_thrd_p && ck < k - 1)
+                ck++;
+            else {
+                if (m >= deflation_max_size)
+                    m = msig = deflation_min_size;
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    for (int j = 0; j < m; j++)
+                        iadd(q, ws[j], -dot(ws[j], q));
+                    iscale(q, 1.0 / sqrt(dot(q, q)));
+                    copy(ws[m], q);
+                }
+                m++;
+            }
+        }
+        if (pcomm == nullptr || pcomm->root == pcomm->rank)
+            q.deallocate();
+        assert(m == deflation_max_size);
+        ndav = xiter;
+        MatrixRef p(nullptr, x.m, x.n), r(nullptr, x.m, x.n);
+        MatrixRef hp(nullptr, x.m, x.n);
+        double ff[2];
+        double &error = ff[0], &func = ff[1];
+        double beta = 0.0, old_beta = 0.0;
+        r.allocate();
+        p.allocate();
+        hp.allocate();
+        int nw = (int)ws.size();
+        for (int i = 0; i < nw; i++) {
+            for (int j = 0; j < i; j++) {
+                double ww = dot(ws[j], ws[i]);
+                iadd(ws[i], ws[j], -ww);
+                iadd(aws[i], aws[j], -ww);
+            }
+            double w_normsq = sqrt(dot(ws[i], ws[i]));
+            assert(w_normsq > 1E-14);
+            iscale(ws[i], 1.0 / w_normsq);
+            iscale(aws[i], 1.0 / w_normsq);
+        }
+        MatrixRef winv(nullptr, nw, nw);
+        MatrixRef mu(nullptr, nw, 1);
+        winv.allocate();
+        mu.allocate();
+        r.clear();
+        p.clear();
+        hp.clear();
+        op(x, r);
+        if (consta != 0)
+            iadd(r, x, consta);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            iscale(r, -1);
+            iadd(r, b, 1); // r = b - Ax
+            if (nw != 0) {
+                for (int i = 0; i < nw; i++)
+                    for (int j = 0; j <= i; j++) {
+                        winv(i, j) = dot(aws[i], ws[j]);
+                        winv(j, i) = winv(i, j);
+                    }
+                inverse(winv);
+                mu.clear();
+                for (int i = 0; i < nw; i++) {
+                    for (int j = 0; j < nw; j++)
+                        mu.data[i] += dot(r, ws[j]) * winv(i, j);
+                    iadd(x, ws[i], mu.data[i]);
+                    iadd(r, aws[i], -mu.data[i]);
+                }
+            }
+            cg_precondition(p, r, aa);
+            if (nw != 0) {
+                op(p, hp);
+                if (consta != 0)
+                    iadd(hp, p, consta);
+                mu.clear();
+                for (int i = 0; i < nw; i++) {
+                    for (int j = 0; j < nw; j++)
+                        mu.data[i] += dot(hp, ws[j]) * winv(i, j);
+                    iadd(p, ws[i], -mu.data[i]);
+                    iadd(hp, aws[i], -mu.data[i]);
+                }
+            }
+            beta = dot(p, r);
+            error = dot(r, r);
+        }
+        if (iprint)
+            cout << endl;
+        if (pcomm != nullptr)
+            pcomm->broadcast(&error, 1, pcomm->root);
+        if (error < conv_thrd) {
+            if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                func = dot(x, b);
+            if (pcomm != nullptr)
+                pcomm->broadcast(&func, 1, pcomm->root);
+            if (iprint)
+                cout << setw(6) << 0 << fixed << setw(15) << setprecision(8)
+                     << func << scientific << setw(13) << setprecision(2)
+                     << error << endl;
+            mu.deallocate();
+            winv.deallocate();
+            hp.deallocate();
+            p.deallocate();
+            r.deallocate();
+            nmult = 1;
+            d_alloc->deallocate(pss.data, deflation_max_size * x.size());
+            d_alloc->deallocate(pbs.data, deflation_max_size * x.size());
+            return func;
+        }
+        old_beta = beta;
+        if (pcomm != nullptr)
+            pcomm->broadcast(p.data, p.size(), pcomm->root);
+        MatrixRef z(nullptr, x.m, x.n), az(nullptr, x.m, x.n);
+        z.allocate();
+        az.allocate();
+        xiter = 0;
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            if (nw == 0) {
+                hp.clear();
+                op(p, hp);
+                if (consta != 0)
+                    iadd(hp, p, consta);
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                double alpha = old_beta / dot(p, hp);
+                iadd(x, p, alpha);
+                iadd(r, hp, -alpha);
+                cg_precondition(z, r, aa);
+                error = dot(r, r);
+                beta = dot(z, r);
+                func = dot(x, b);
+                if (iprint)
+                    cout << setw(6) << xiter << fixed << setw(15)
+                         << setprecision(8) << func << scientific << setw(13)
+                         << setprecision(2) << error << endl;
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(&error, 2, pcomm->root);
+            if (error < conv_thrd)
+                break;
+            else {
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    double gamma = beta / old_beta;
+                    old_beta = beta;
+                    iscale(p, gamma);
+                    iadd(p, z, 1.0);
+                    if (nw != 0) {
+                        az.clear();
+                        op(z, az);
+                        if (consta != 0)
+                            iadd(az, z, consta);
+                        iscale(hp, gamma);
+                        iadd(hp, az, 1.0);
+                        mu.clear();
+                        for (int i = 0; i < nw; i++) {
+                            for (int j = 0; j < nw; j++)
+                                mu.data[i] += dot(az, ws[j]) * winv(i, j);
+                            iadd(p, ws[i], -mu.data[i]);
+                            iadd(hp, aws[i], -mu.data[i]);
+                        }
+                    }
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(p.data, p.size(), pcomm->root);
+            }
+        }
+        if (xiter == max_iter && error >= conv_thrd) {
+            cout << "Error : linear solver (cg) not converged!" << endl;
+            assert(false);
+        }
+        nmult = xiter + 1;
+        az.deallocate();
+        z.deallocate();
+        mu.deallocate();
+        winv.deallocate();
+        hp.deallocate();
+        p.deallocate();
+        r.deallocate();
+        if (pcomm != nullptr)
+            pcomm->broadcast(x.data, x.size(), pcomm->root);
+        d_alloc->deallocate(pss.data, deflation_max_size * x.size());
+        d_alloc->deallocate(pbs.data, deflation_max_size * x.size());
+        return func;
+    }
+    // Solve x in linear equation H x = b
+    // by applying deflated CG method
+    // where H is symmetric and positive-definite
+    // H x := op(x) + consta * x
+    template <typename MatMul, typename PComm>
+    static double deflated_conjugate_gradient(
+        MatMul &op, const DiagonalMatrix &aa, MatrixRef x, MatrixRef b,
+        int &nmult, double consta = 0.0, bool iprint = false,
+        const PComm &pcomm = nullptr, double conv_thrd = 5E-6,
+        int max_iter = 5000, int soft_max_iter = -1,
+        const vector<MatrixRef> &ws = vector<MatrixRef>()) {
+        shared_ptr<VectorAllocator<double>> d_alloc =
+            make_shared<VectorAllocator<double>>();
+        MatrixRef p(nullptr, x.m, x.n), r(nullptr, x.m, x.n);
+        MatrixRef hp(nullptr, x.m, x.n);
+        double ff[2];
+        double &error = ff[0], &func = ff[1];
+        double beta = 0.0, old_beta = 0.0;
+        r.allocate();
+        p.allocate();
+        hp.allocate();
+        int nw = (int)ws.size();
+        vector<MatrixRef> aws(nw, MatrixRef(nullptr, x.m, x.n));
+        MatrixRef paws(nullptr, (MKL_INT)(nw * x.size()), 1);
+        paws.data = d_alloc->allocate(nw * x.size());
+        for (int i = 0; i < nw; i++) {
+            for (int j = 0; j < i; j++)
+                iadd(ws[i], ws[j], -dot(ws[j], ws[i]));
+            double w_normsq = sqrt(dot(ws[i], ws[i]));
+            assert(w_normsq > 1E-14);
+            iscale(ws[i], 1.0 / w_normsq);
+            aws[i].data = paws.data + ws[i].size() * i;
+            aws[i].clear();
+            op(ws[i], aws[i]);
+            if (consta != 0)
+                iadd(aws[i], ws[i], consta);
+        }
+        MatrixRef winv(nullptr, nw, nw);
+        MatrixRef mu(nullptr, nw, 1);
+        winv.allocate();
+        mu.allocate();
+        r.clear();
+        p.clear();
+        hp.clear();
+        op(x, r);
+        if (consta != 0)
+            iadd(r, x, consta);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            iscale(r, -1);
+            iadd(r, b, 1); // r = b - Ax
+            if (nw != 0) {
+                for (int i = 0; i < nw; i++)
+                    for (int j = 0; j <= i; j++) {
+                        winv(i, j) = dot(aws[i], ws[j]);
+                        winv(j, i) = winv(i, j);
+                    }
+                inverse(winv);
+                mu.clear();
+                for (int i = 0; i < nw; i++) {
+                    for (int j = 0; j < nw; j++)
+                        mu.data[i] += dot(r, ws[j]) * winv(i, j);
+                    iadd(x, ws[i], mu.data[i]);
+                    iadd(r, aws[i], -mu.data[i]);
+                }
+            }
+            cg_precondition(p, r, aa);
+            if (nw != 0) {
+                op(p, hp);
+                if (consta != 0)
+                    iadd(hp, p, consta);
+                mu.clear();
+                for (int i = 0; i < nw; i++) {
+                    for (int j = 0; j < nw; j++)
+                        mu.data[i] += dot(hp, ws[j]) * winv(i, j);
+                    iadd(p, ws[i], -mu.data[i]);
+                    iadd(hp, aws[i], -mu.data[i]);
+                }
+            }
+            beta = dot(p, r);
+            error = dot(r, r);
+        }
+        if (iprint)
+            cout << endl;
+        if (pcomm != nullptr)
+            pcomm->broadcast(&error, 1, pcomm->root);
+        if (error < conv_thrd) {
+            if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                func = dot(x, b);
+            if (pcomm != nullptr)
+                pcomm->broadcast(&func, 1, pcomm->root);
+            if (iprint)
+                cout << setw(6) << 0 << fixed << setw(15) << setprecision(8)
+                     << func << scientific << setw(13) << setprecision(2)
+                     << error << endl;
+            mu.deallocate();
+            winv.deallocate();
+            hp.deallocate();
+            p.deallocate();
+            r.deallocate();
+            nmult = 1;
+            d_alloc->deallocate(paws.data, nw * x.size());
+            return func;
+        }
+        old_beta = beta;
+        if (pcomm != nullptr)
+            pcomm->broadcast(p.data, p.size(), pcomm->root);
+        MatrixRef z(nullptr, x.m, x.n), az(nullptr, x.m, x.n);
+        z.allocate();
+        az.allocate();
+        int xiter = 0;
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            if (nw == 0) {
+                hp.clear();
+                op(p, hp);
+                if (consta != 0)
+                    iadd(hp, p, consta);
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                double alpha = old_beta / dot(p, hp);
+                iadd(x, p, alpha);
+                iadd(r, hp, -alpha);
+                cg_precondition(z, r, aa);
+                error = dot(r, r);
+                beta = dot(z, r);
+                func = dot(x, b);
+                if (iprint)
+                    cout << setw(6) << xiter << fixed << setw(15)
+                         << setprecision(8) << func << scientific << setw(13)
+                         << setprecision(2) << error << endl;
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(&error, 2, pcomm->root);
+            if (error < conv_thrd)
+                break;
+            else {
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    double gamma = beta / old_beta;
+                    old_beta = beta;
+                    iscale(p, gamma);
+                    iadd(p, z, 1.0);
+                    if (nw != 0) {
+                        az.clear();
+                        op(z, az);
+                        if (consta != 0)
+                            iadd(az, z, consta);
+                        iscale(hp, gamma);
+                        iadd(hp, az, 1.0);
+                        mu.clear();
+                        for (int i = 0; i < nw; i++) {
+                            for (int j = 0; j < nw; j++)
+                                mu.data[i] += dot(az, ws[j]) * winv(i, j);
+                            iadd(p, ws[i], -mu.data[i]);
+                            iadd(hp, aws[i], -mu.data[i]);
+                        }
+                    }
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(p.data, p.size(), pcomm->root);
+            }
+        }
+        if (xiter == max_iter && error >= conv_thrd) {
+            cout << "Error : linear solver (cg) not converged!" << endl;
+            assert(false);
+        }
+        nmult = xiter + 1;
+        az.deallocate();
+        z.deallocate();
+        mu.deallocate();
+        winv.deallocate();
+        hp.deallocate();
+        p.deallocate();
+        r.deallocate();
+        if (pcomm != nullptr)
+            pcomm->broadcast(x.data, x.size(), pcomm->root);
+        d_alloc->deallocate(paws.data, nw * x.size());
+        return func;
+    }
+    // Solve x in linear equation H x = b
+    // by applying linear CG method
+    // where H is symmetric and positive-definite
+    // H x := op(x) + consta * x
+    template <typename MatMul, typename PComm>
+    static double
+    conjugate_gradient(MatMul &op, const DiagonalMatrix &aa, MatrixRef x,
+                       MatrixRef b, int &nmult, double consta = 0.0,
+                       bool iprint = false, const PComm &pcomm = nullptr,
+                       double conv_thrd = 5E-6, int max_iter = 5000,
+                       int soft_max_iter = -1) {
+        MatrixRef p(nullptr, x.m, x.n), r(nullptr, x.m, x.n);
+        double ff[2];
+        double &error = ff[0], &func = ff[1];
+        double beta = 0.0, old_beta = 0.0;
+        r.allocate();
+        p.allocate();
+        r.clear();
+        p.clear();
+        op(x, r);
+        if (consta != 0)
+            iadd(r, x, consta);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            iscale(r, -1);
+            iadd(r, b, 1); // r = b - Ax
+            cg_precondition(p, r, aa);
+            beta = dot(p, r);
+            error = dot(r, r);
+        }
+        if (iprint)
+            cout << endl;
+        if (pcomm != nullptr)
+            pcomm->broadcast(&error, 1, pcomm->root);
+        if (error < conv_thrd) {
+            if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                func = dot(x, b);
+            if (pcomm != nullptr)
+                pcomm->broadcast(&func, 1, pcomm->root);
+            if (iprint)
+                cout << setw(6) << 0 << fixed << setw(15) << setprecision(8)
+                     << func << scientific << setw(13) << setprecision(2)
+                     << error << endl;
+            p.deallocate();
+            r.deallocate();
+            nmult = 1;
+            return func;
+        }
+        old_beta = beta;
+        if (pcomm != nullptr)
+            pcomm->broadcast(p.data, p.size(), pcomm->root);
+        MatrixRef hp(nullptr, x.m, x.n), z(nullptr, x.m, x.n);
+        hp.allocate();
+        z.allocate();
+        int xiter = 0;
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            hp.clear();
+            op(p, hp);
+            if (consta != 0)
+                iadd(hp, p, consta);
+
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                double alpha = old_beta / dot(p, hp);
+                iadd(x, p, alpha);
+                iadd(r, hp, -alpha);
+                cg_precondition(z, r, aa);
+                error = dot(r, r);
+                beta = dot(z, r);
+                func = dot(x, b);
+                if (iprint)
+                    cout << setw(6) << xiter << fixed << setw(15)
+                         << setprecision(8) << func << scientific << setw(13)
+                         << setprecision(2) << error << endl;
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(&error, 2, pcomm->root);
+            if (error < conv_thrd)
+                break;
+            else {
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    double gamma = beta / old_beta;
+                    old_beta = beta;
+                    iadd(p, z, 1 / gamma);
+                    iscale(p, gamma);
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(p.data, p.size(), pcomm->root);
+            }
+        }
+        if (xiter == max_iter && error >= conv_thrd) {
+            cout << "Error : linear solver (cg) not converged!" << endl;
+            assert(false);
+        }
+        nmult = xiter + 1;
+        z.deallocate();
+        hp.deallocate();
+        p.deallocate();
+        r.deallocate();
+        if (pcomm != nullptr)
+            pcomm->broadcast(x.data, x.size(), pcomm->root);
+        return func;
+    }
+    // Solve x in linear equation H x = b where H^T = H
+    // by applying linear CG method to equation (H H) x = H b
+    // where H x := op(x) + consta * x
+    template <typename MatMul, typename PComm>
+    static double minres(MatMul &op, MatrixRef x, MatrixRef b, int &nmult,
+                         double consta = 0.0, bool iprint = false,
+                         const PComm &pcomm = nullptr, double conv_thrd = 5E-6,
+                         int max_iter = 5000, int soft_max_iter = -1) {
+        MatrixRef p(nullptr, x.m, x.n), r(nullptr, x.m, x.n);
+        double ff[2];
+        double &error = ff[0], &func = ff[1];
+        r.allocate();
+        r.clear();
+        op(x, r);
+        if (consta != 0)
+            iadd(r, x, consta);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            iadd(r, b, -1);
+            iscale(r, -1);
+            p.allocate();
+            copy(p, r);
+            error = dot(r, r);
+        }
+        if (iprint)
+            cout << endl;
+        if (pcomm != nullptr)
+            pcomm->broadcast(&error, 1, pcomm->root);
+        if (error < conv_thrd) {
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                func = dot(x, b);
+                p.deallocate();
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(&func, 1, pcomm->root);
+            if (iprint)
+                cout << setw(6) << 0 << fixed << setw(15) << setprecision(8)
+                     << func << scientific << setw(13) << setprecision(2)
+                     << error << endl;
+            r.deallocate();
+            nmult = 1;
+            return func;
+        }
+        if (pcomm != nullptr)
+            pcomm->broadcast(r.data, r.size(), pcomm->root);
+        double beta = 0, prev_beta = 0;
+        MatrixRef hp(nullptr, x.m, x.n), hr(nullptr, x.m, x.n);
+        hr.allocate();
+        hr.clear();
+        op(r, hr);
+        if (consta != 0)
+            iadd(hr, r, consta);
+        prev_beta = dot(r, hr);
+        int xiter = 0;
+
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            hp.allocate();
+            copy(hp, hr);
+        }
+
+        while (xiter < max_iter &&
+               (soft_max_iter == -1 || xiter < soft_max_iter)) {
+            xiter++;
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                double alpha = dot(r, hr) / dot(hp, hp);
+                iadd(x, p, alpha);
+                iadd(r, hp, -alpha);
+                error = dot(r, r);
+                func = dot(x, b);
+                if (iprint)
+                    cout << setw(6) << xiter << fixed << setw(15)
+                         << setprecision(8) << func << scientific << setw(13)
+                         << setprecision(2) << error << endl;
+            }
+            if (pcomm != nullptr) {
+                pcomm->broadcast(&error, 2, pcomm->root);
+                pcomm->broadcast(r.data, r.size(), pcomm->root);
+            }
+            if (error < conv_thrd)
+                break;
+            else {
+                hr.clear();
+                op(r, hr);
+                if (consta != 0)
+                    iadd(hr, r, consta);
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    beta = dot(r, hr);
+                    iadd(p, r, prev_beta / beta);
+                    iscale(p, beta / prev_beta);
+                    iadd(hp, hr, prev_beta / beta);
+                    iscale(hp, beta / prev_beta);
+                    prev_beta = beta;
+                }
+            }
+        }
+        if (xiter == max_iter && error >= conv_thrd) {
+            cout << "Error : linear solver (minres) not converged!" << endl;
+            assert(false);
+        }
+        nmult = xiter + 1;
+        if (pcomm == nullptr || pcomm->root == pcomm->rank)
+            hp.deallocate();
+        hr.deallocate();
+        if (pcomm == nullptr || pcomm->root == pcomm->rank)
+            p.deallocate();
+        r.deallocate();
+        if (pcomm != nullptr)
+            pcomm->broadcast(x.data, x.size(), pcomm->root);
+        return func;
+    }
+    // GCROT(m, k) method for solving x in linear equation H x = b
+    template <typename MatMul, typename PComm>
+    static double gcrotmk(MatMul &op, const DiagonalMatrix &aa, MatrixRef x,
+                          MatrixRef b, int &nmult, int &niter, int m = 20,
+                          int k = -1, double consta = 0.0, bool iprint = false,
+                          const PComm &pcomm = nullptr, double conv_thrd = 5E-6,
+                          int max_iter = 5000, int soft_max_iter = -1) {
+        MatrixRef r(nullptr, x.m, x.n), w(nullptr, x.m, x.n);
+        double ff[4];
+        double &beta = ff[0], &rr = ff[1];
+        double &func = ff[2];
+        r.allocate();
+        w.allocate();
+        r.clear();
+        op(x, r);
+        if (consta != 0)
+            iadd(r, x, consta);
+        if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+            iscale(r, -1);
+            iadd(r, b, 1); // r = b - Ax
+            func = dot(x, b);
+            beta = norm(r);
+        }
+        if (pcomm != nullptr)
+            pcomm->broadcast(&beta, 4, pcomm->root);
+        if (iprint)
+            cout << endl;
+        if (k == -1)
+            k = m;
+        int xiter = 0, jiter = 1, nn = k + m + 2;
+        vector<MatrixRef> cvs(nn, MatrixRef(nullptr, x.m, x.n));
+        vector<MatrixRef> uzs(nn, MatrixRef(nullptr, x.m, x.n));
+        vector<double> pcus;
+        pcus.reserve(x.size() * 2 * nn);
+        for (int i = 0; i < nn; i++) {
+            cvs[i].data = pcus.data() + cvs[i].size() * i;
+            uzs[i].data = pcus.data() + uzs[i].size() * (i + nn);
+        }
+        int ncs = 0, icu = 0;
+        MatrixRef bmat(nullptr, k, k + m);
+        MatrixRef hmat(nullptr, k + m + 1, k + m);
+        MatrixRef ys(nullptr, k + m, 1);
+        MatrixRef bys(nullptr, k, 1);
+        MatrixRef hys(nullptr, k + m + 1, 1);
+        bmat.allocate();
+        hmat.allocate();
+        ys.allocate();
+        bys.allocate();
+        hys.allocate();
+        while (jiter < max_iter &&
+               (soft_max_iter == -1 || jiter < soft_max_iter)) {
+            xiter++;
+            if (iprint)
+                cout << setw(6) << xiter << setw(6) << jiter << fixed
+                     << setw(15) << setprecision(8) << func << scientific
+                     << setw(13) << setprecision(2) << beta * beta << endl;
+            if (beta * beta < conv_thrd)
+                break;
+            int ml = m + max(k - ncs, 0), ivz = icu + ncs + 1, nz = 0;
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                iadd(cvs[ivz % nn], r, 1 / beta, false, 0.0);
+                hmat.clear();
+                hys.clear();
+                hys.data[0] = beta;
+            }
+            for (int j = 0; j < ml; j++) {
+                jiter++;
+                MatrixRef z(uzs[(ivz + j) % nn].data, x.m, x.n);
+                if (pcomm == nullptr || pcomm->root == pcomm->rank)
+                    cg_precondition(z, cvs[(ivz + j) % nn], aa);
+                if (pcomm != nullptr)
+                    pcomm->broadcast(z.data, z.size(), pcomm->root);
+                w.clear();
+                op(z, w);
+                if (consta != 0)
+                    iadd(w, z, consta);
+                nz = j + 1;
+                if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                    for (int i = 0; i < ncs; i++) {
+                        bmat(i, j) = dot(cvs[(icu + i) % nn], w);
+                        iadd(w, cvs[(icu + i) % nn], -bmat(i, j));
+                    }
+                    for (int i = 0; i < nz; i++) {
+                        hmat(i, j) = dot(cvs[(ivz + i) % nn], w);
+                        iadd(w, cvs[(ivz + i) % nn], -hmat(i, j));
+                    }
+                    hmat(j + 1, j) = norm(w);
+                    iadd(cvs[(ivz + nz) % nn], w, 1.0 / hmat(j + 1, j), false,
+                         0.0);
+                    rr = least_squares(MatrixRef(hmat.data, j + 2, hmat.n),
+                                       MatrixRef(hys.data, j + 2, 1),
+                                       MatrixRef(ys.data, j + 1, 1));
+                }
+                if (pcomm != nullptr)
+                    pcomm->broadcast(&rr, 1, pcomm->root);
+                if (rr * rr < conv_thrd)
+                    break;
+            }
+            if (pcomm == nullptr || pcomm->root == pcomm->rank) {
+                multiply(MatrixRef(bmat.data, ncs, bmat.n), false,
+                         MatrixRef(ys.data, nz, 1), false,
+                         MatrixRef(bys.data, ncs, 1), 1.0, 0.0);
+                multiply(MatrixRef(hmat.data, nz + 1, hmat.n), false,
+                         MatrixRef(ys.data, nz, 1), false,
+                         MatrixRef(hys.data, nz + 1, 1), 1.0, 0.0);
+                for (int i = 0; i < nz; i++)
+                    iadd(uzs[(icu + ncs) % nn], uzs[(ivz + i) % nn], ys(i, 0),
+                         false, !!i);
+                for (int i = 0; i < ncs; i++)
+                    iadd(uzs[(icu + ncs) % nn], uzs[(icu + i) % nn], -bys(i, 0),
+                         false);
+                for (int i = 0; i < nz + 1; i++)
+                    iadd(cvs[(icu + ncs) % nn], cvs[(ivz + i) % nn], hys(i, 0),
+                         false, !!i);
+                double alpha = norm(cvs[(icu + ncs) % nn]);
+                iscale(cvs[(icu + ncs) % nn], 1 / alpha);
+                iscale(uzs[(icu + ncs) % nn], 1 / alpha);
+                double gamma = dot(cvs[(icu + ncs) % nn], r);
+                iadd(r, cvs[(icu + ncs) % nn], -gamma);
+                iadd(x, uzs[(icu + ncs) % nn], gamma);
+                func = dot(x, b);
+                beta = norm(r);
+            }
+            if (pcomm != nullptr)
+                pcomm->broadcast(&beta, 4, pcomm->root);
+            if (ncs == k)
+                icu = (icu + 1) % nn;
+            else
+                ncs++;
+        }
+        if (jiter >= max_iter && beta * beta >= conv_thrd) {
+            cout << "Error : linear solver GCROT(m, k) not converged!" << endl;
+            assert(false);
+        }
+        nmult = jiter;
+        niter = xiter + 1;
+        hys.deallocate();
+        bys.deallocate();
+        ys.deallocate();
+        hmat.deallocate();
+        bmat.deallocate();
+        w.deallocate();
+        r.deallocate();
+        if (pcomm != nullptr)
+            pcomm->broadcast(x.data, x.size(), pcomm->root);
+        return func;
+    }
 };
+
+typedef GMatrixFunctions<double> MatrixFunctions;
 
 } // namespace block2
